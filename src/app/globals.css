@@ -1,0 +1,217 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+/* --------------------------------------------------------------------------
+   Tokens. Ontleend aan oude telefooncentrales: petrol-emaille, groene
+   signaallampen, okergele wachtlampjes, baksteenrood voor storing.
+   -------------------------------------------------------------------------- */
+:root {
+  --ink: #0f1e22;
+  --paper: #edf0ee;
+  --card: #ffffff;
+  --rule: #c6d0cd;
+  --mute: #6b7b79;
+
+  --signal: #0e6e5c; /* bevestigd  */
+  --live: #b87a2b;   /* in gesprek */
+  --halt: #9e3b2e;   /* geweigerd  */
+
+  --display: "Bricolage Grotesque", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --step: 8px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.55 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0;
+}
+
+h1 { font-size: clamp(28px, 5vw, 44px); }
+h2 { font-size: 20px; }
+
+a { color: var(--signal); }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.eyebrow {
+  font: 500 12px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.wrap { max-width: 640px; margin: 0 auto; padding: calc(var(--step) * 6) calc(var(--step) * 2); }
+.wrap--wide { max-width: 1100px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: calc(var(--step) * 4);
+}
+
+/* --------------------------------------------------------------------------
+   Formulier
+   -------------------------------------------------------------------------- */
+.field { border-top: 1px solid var(--rule); padding: calc(var(--step) * 3) 0; }
+.field:first-of-type { border-top: 0; }
+
+.field > label,
+.field > legend {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.field .hint { font-size: 14px; color: var(--mute); margin: 0 0 12px; }
+
+/* Signatuur: wat de assistent aan de telefoon letterlijk zou zeggen.
+   Geen versiering — het laat zien dat beide kanalen dezelfde bron gebruiken. */
+.spoken {
+  font: 400 13px/1.5 var(--mono);
+  color: var(--mute);
+  border-left: 2px solid var(--rule);
+  padding: 2px 0 2px 12px;
+  margin: 12px 0 0;
+}
+.spoken::before {
+  content: "aan de telefoon: ";
+  color: var(--signal);
+}
+
+input[type="number"],
+input[type="text"],
+textarea,
+select {
+  width: 100%;
+  font: 400 16px/1.4 var(--body);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 10px 12px;
+}
+input[type="number"] { font-family: var(--mono); font-size: 20px; max-width: 160px; }
+textarea { min-height: 88px; resize: vertical; }
+
+.choices { display: flex; flex-wrap: wrap; gap: 8px; border: 0; margin: 0; padding: 0; }
+.choices label {
+  font-size: 14px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: var(--paper);
+}
+.choices input { position: absolute; opacity: 0; }
+.choices input:checked + span { font-weight: 600; }
+.choices label:has(input:checked) { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+
+.btn {
+  font: 600 15px/1 var(--body);
+  background: var(--signal);
+  color: #fff;
+  border: 0;
+  border-radius: 2px;
+  padding: 14px 22px;
+  cursor: pointer;
+}
+.btn--quiet { background: transparent; color: var(--mute); border: 1px solid var(--rule); }
+.btn--halt { background: var(--halt); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.notice {
+  border-left: 3px solid var(--signal);
+  background: #fff;
+  padding: 14px 16px;
+  font-size: 15px;
+  margin-bottom: calc(var(--step) * 3);
+}
+
+/* --------------------------------------------------------------------------
+   Dashboard: het lijnenbord
+   Eén streep per partner, in wachtrijvolgorde. Kleur = status.
+   -------------------------------------------------------------------------- */
+.board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 6px;
+  margin: calc(var(--step) * 3) 0;
+}
+
+.line {
+  height: 34px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--card);
+  position: relative;
+  overflow: hidden;
+  display: block;
+  text-decoration: none;
+}
+.line::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 4px;
+  background: var(--rule);
+}
+.line[data-state="verified"]::after      { background: var(--signal); }
+.line[data-state="self_reported"]::after { background: var(--signal); opacity: 0.55; }
+.line[data-state="completed"]::after     { background: var(--signal); opacity: 0.3; }
+.line[data-state="calling"]::after       { background: var(--live); animation: pulse 1.1s ease-in-out infinite; }
+.line[data-state="scheduled"]::after     { background: var(--live); opacity: 0.4; }
+.line[data-state="refused"]::after,
+.line[data-state="invalid"]::after       { background: var(--halt); }
+
+.line .n {
+  font: 500 11px/34px var(--mono);
+  color: var(--mute);
+  padding-left: 6px;
+}
+.line[data-state="calling"] .n { color: var(--live); }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.25 } }
+@media (prefers-reduced-motion: reduce) {
+  .line[data-state="calling"]::after { animation: none; }
+}
+
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font: 400 13px/1 var(--body); color: var(--mute); }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+
+.tally { display: flex; flex-wrap: wrap; gap: calc(var(--step) * 5); margin: calc(var(--step) * 3) 0; }
+.tally div { display: flex; flex-direction: column; gap: 2px; }
+.tally b { font: 700 32px/1 var(--display); letter-spacing: -0.03em; }
+
+.controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+table.log { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.log th {
+  text-align: left;
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  padding: 0 12px 10px 0;
+}
+table.log td { padding: 10px 12px 10px 0; border-top: 1px solid var(--rule); vertical-align: top; }
+table.log td.num { font-family: var(--mono); }
