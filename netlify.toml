@@ -1,0 +1,14 @@
+# Netlify draait alleen de Next.js-app: dashboard, formulier en API-routes.
+# De worker en de websocket-server draaien elders — zie README.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[[headers]]
+  for = "/dashboard"
+  [headers.values]
+    X-Robots-Tag = "noindex"

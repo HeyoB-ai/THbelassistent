@@ -1,0 +1,28 @@
+{
+  // Aparte build voor de worker. De Next.js-app draait via `next` (bundler),
+  // maar de worker draait als los Node-proces en compileren we met tsc naar dist/.
+  // Alleen de bestanden die de worker nodig heeft — geen app/, geen React.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src/worker.ts",
+    "src/relay/**/*.ts",
+    "src/lib/**/*.ts",
+    "src/survey.ts"
+  ],
+  "exclude": ["node_modules", "src/app/**", "dist"]
+}

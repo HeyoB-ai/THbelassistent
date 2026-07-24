@@ -1,0 +1,40 @@
+{
+  "name": "partner-enquete",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "worker": "tsx src/worker.ts",
+    "worker:build": "tsc -p tsconfig.worker.json",
+    "worker:start": "node dist/worker.js",
+    "db:push": "psql $DATABASE_URL -f db/schema.sql",
+    "import": "tsx scripts/import-partners.ts",
+    "announce": "tsx scripts/send-announcements.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "date-holidays": "^3.24.0",
+    "dotenv": "^17.0.0",
+    "next": "^15.4.0",
+    "nodemailer": "^7.0.0",
+    "pg": "^8.13.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "twilio": "^5.5.0",
+    "ws": "^8.18.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^7.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
