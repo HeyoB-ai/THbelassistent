@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from "ws";
+import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { q, one, getCampaign, logEvent } from "../lib/db.js";
 import { SurveyAgent, type PartnerContext } from "./agent.js";
@@ -25,8 +26,22 @@ type Session = {
 };
 
 export async function startRelayServer(port: number) {
-  const wss = new WebSocketServer({ port });
-  console.log(`[relay] luistert op :${port}`);
+  // We hangen de WebSocket aan een gewone http-server, zodat dezelfde poort ook
+  // een healthcheck kan serveren. Zo zie je in de browser of de worker draait,
+  // en kan Railway de service monitoren.
+  const http = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+  });
+
+  const wss = new WebSocketServer({ server: http });
+  http.listen(port);
+  console.log(`[relay] luistert op :${port} (ws + GET /health)`);
 
   wss.on("connection", (ws) => {
     let session: Session | null = null;

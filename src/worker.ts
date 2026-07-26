@@ -153,7 +153,10 @@ async function abortLiveCalls() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  await startRelayServer(Number(process.env.RELAY_PORT ?? 8081));
+  // Railway (en veel andere platforms) geeft de poort mee via PORT.
+  await startRelayServer(
+    Number(process.env.PORT ?? process.env.RELAY_PORT ?? 8081),
+  );
   console.log("[worker] gestart");
 
   const timer = setInterval(tick, TICK_MS);
