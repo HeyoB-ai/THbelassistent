@@ -126,8 +126,10 @@ export async function startRelayServer(port: number) {
             break;
 
           case "interrupt":
-            // De beller praat er doorheen. Twilio kapt de TTS al af; wij
-            // hoeven alleen te zorgen dat we niet doorpompen.
+            // De beller praat er doorheen. Twilio kapt de TTS af, maar het
+            // model schrijft door: nu we streamen zouden we frames blijven
+            // sturen voor tekst die niemand meer hoort. Dus ook afkappen.
+            session?.agent.interrupt();
             break;
 
           case "error":
@@ -218,10 +220,13 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
 }
 
 async function handlePrompt(ws: WebSocket, session: Session, utterance: string) {
-  const reply = await session.agent.respondTo(utterance);
+  // De tekst gaat stuk voor stuk de deur uit terwijl het model nog schrijft,
+  // zodat de TTS begint bij de eerste woorden in plaats van na het hele antwoord.
+  const speaker = createSpeaker(ws);
+  await session.agent.respondTo(utterance, (chunk) => speaker.push(chunk));
+  speaker.end();
 
   if (session.agent.submitted) {
-    if (reply) speak(ws, reply);
     // Even wachten tot de afsluitende zin is uitgesproken voordat we ophangen.
     // Ook hier geldt: geen aanroeper, dus alles moet binnen de callback worden
     // afgevangen. In die vier seconden kan de beller allang opgehangen hebben.
@@ -235,14 +240,45 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
         console.error("[relay] afronden na ingevulde vragenlijst faalde:", err);
       }
     }, 4000);
-    return;
   }
-
-  speak(ws, reply);
 }
 
+/**
+ * Stuurt tekst in stukjes naar ConversationRelay.
+ *
+ * Twilio verwacht per beurt een reeks tekstframes met last:false en precies één
+ * afsluitend frame met last:true. Daarom houdt dit ding steeds één stukje vast:
+ * pas als het volgende binnenkomt weet je dat het vorige niet het laatste was.
+ * Komt er helemaal geen tekst (het model roept meteen de tool aan), dan gaat er
+ * ook niets de deur uit.
+ */
+function createSpeaker(ws: WebSocket) {
+  let pending: string | null = null;
+
+  const send = (token: string, last: boolean) => {
+    // Na vier seconden praten kan de beller allang opgehangen hebben.
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "text", token, last }));
+  };
+
+  return {
+    push(chunk: string) {
+      if (!chunk) return;
+      if (pending !== null) send(pending, false);
+      pending = chunk;
+    },
+    end() {
+      if (pending === null) return;
+      send(pending, true);
+      pending = null;
+    },
+  };
+}
+
+/** Eén afgeronde zin ineens — voor de vaste opening, die niet gestreamd wordt. */
 function speak(ws: WebSocket, text: string) {
   if (!text) return;
+  if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "text", token: text, last: true }));
 }
 

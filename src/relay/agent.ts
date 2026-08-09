@@ -139,14 +139,33 @@ export class SurveyAgent {
   public submitted: SubmitPayload | null = null;
   /** Alleen voor de tijdelijke latency-logging: het hoeveelste model-antwoord. */
   private turn = 1;
+  /** De lopende model-stream, zodat interrupt() 'm kan afkappen. */
+  private active: { abort: () => void } | null = null;
 
   constructor(private partner: PartnerContext) {}
 
-  /** Geef een uiting van de beller door; levert de tekst die uitgesproken moet worden. */
-  async respondTo(utterance: string): Promise<string> {
+  /**
+   * Geef een uiting van de beller door.
+   *
+   * `onChunk` krijgt de tekst stukje bij beetje binnen terwijl het model nog
+   * schrijft, zodat de relay meteen kan laten uitspreken. De volledige tekst
+   * komt daarnaast als returnwaarde terug, voor het transcript.
+   */
+  async respondTo(utterance: string, onChunk?: (chunk: string) => void): Promise<string> {
     this.messages.push({ role: "user", content: utterance });
     this.transcript.push({ role: "user", content: utterance, at: new Date().toISOString() });
-    return this.run();
+    return this.run(onChunk);
+  }
+
+  /**
+   * De beller praat er doorheen: kap de lopende model-aanroep af.
+   *
+   * Zonder dit blijft het model doorschrijven terwijl niemand meer luistert —
+   * dat kost tokens en zorgt dat de assistent straks reageert op een vraag die
+   * de beller allang heeft ingetrokken.
+   */
+  interrupt() {
+    this.active?.abort();
   }
 
   /**
@@ -162,28 +181,65 @@ export class SurveyAgent {
     return OPENING;
   }
 
-  private async run(): Promise<string> {
+  private async run(onChunk?: (chunk: string) => void): Promise<string> {
     const system = systemPrompt(this.partner);
-
-    // TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
-    // Dit is de enige plek in een beurt waar we op iets externs wachten, dus
-    // deze meting zegt of de stilte na een antwoord van het model komt.
     const started = Date.now();
+    let firstTokenAt: number | null = null;
+    let streamed = "";
 
-    const res = await anthropic.messages.create({
+    const stream = anthropic.messages.stream({
       model: MODEL,
       max_tokens: 400,
       system,
       tools: [SUBMIT_TOOL as Anthropic.Tool],
       messages: this.messages,
     });
+    this.active = stream;
 
+    // Elk stukje tekst gaat meteen door naar de beller. De tool-call wordt hier
+    // bewust niet aangeraakt: die komt pas uit finalMessage(), als hij compleet
+    // en geparsed is. Half binnengekomen JSON mag nooit de database in.
+    stream.on("text", (delta) => {
+      if (firstTokenAt === null) firstTokenAt = Date.now();
+      streamed += delta;
+      onChunk?.(delta);
+    });
+
+    let res: Anthropic.Message;
+    try {
+      res = await stream.finalMessage();
+    } catch (err) {
+      this.active = null;
+      // Afgekapt door interrupt(): geen submitted, wél vastleggen wat er al
+      // gezegd is, zodat het model in de volgende beurt weet waar het bleef.
+      if (isAbort(err)) {
+        const partial = streamed.trim();
+        console.log(`[llm] ${MODEL} beurt ${this.turn} — afgebroken na ${Date.now() - started}ms`);
+        this.turn++;
+        if (partial) {
+          this.messages.push({ role: "assistant", content: partial });
+          this.transcript.push({
+            role: "assistant",
+            content: partial,
+            at: new Date().toISOString(),
+          });
+        }
+        return partial;
+      }
+      throw err;
+    }
+    this.active = null;
+
+    // TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
+    // ttft is wat de beller merkt: hoe lang het duurt voor er geluid komt.
     const ms = Date.now() - started;
+    const ttft = firstTokenAt === null ? "n.v.t. (alleen tool-call)" : `${firstTokenAt - started}ms`;
     const u = res.usage;
     console.log(
-      `[llm] ${MODEL} beurt ${this.turn} — ${ms}ms | in ${u.input_tokens} tok ` +
-        `(cache write ${u.cache_creation_input_tokens ?? 0}, read ${u.cache_read_input_tokens ?? 0}) ` +
-        `| uit ${u.output_tokens} tok | stop=${res.stop_reason} | systeemprompt ${system.length} tekens`,
+      `[llm] ${MODEL} beurt ${this.turn} — ttft ${ttft} | totaal ${ms}ms | ` +
+        `in ${u.input_tokens} tok (cache write ${u.cache_creation_input_tokens ?? 0}, ` +
+        `read ${u.cache_read_input_tokens ?? 0}) | uit ${u.output_tokens} tok | ` +
+        `stop=${res.stop_reason} | systeemprompt ${system.length} tekens`,
     );
     this.turn++;
 
@@ -209,4 +265,10 @@ export class SurveyAgent {
     }
     return text;
   }
+}
+
+/** Een afgebroken stream is geen fout om over te struikelen. */
+function isAbort(err: unknown): boolean {
+  const e = err as { name?: string; constructor?: { name?: string } } | null;
+  return e?.name === "AbortError" || e?.constructor?.name === "APIUserAbortError";
 }
