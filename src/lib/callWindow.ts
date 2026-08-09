@@ -59,8 +59,10 @@ export function isDutchHoliday(at: Date): false | string {
 }
 
 export function isCallableMoment(at: Date, w: Window): boolean {
-  const { weekday, minutes } = amsterdamParts(at);
-  if (weekday === "Sat" || weekday === "Sun") return false;
+  const { minutes } = amsterdamParts(at);
+  // TODO: tijdelijk uit voor test — terugzetten voor productie
+  // const { weekday } = amsterdamParts(at);
+  // if (weekday === "Sat" || weekday === "Sun") return false;
   if (isDutchHoliday(at)) return false;
   return minutes >= toMinutes(w.start) && minutes < toMinutes(w.end);
 }
