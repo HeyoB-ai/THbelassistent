@@ -59,11 +59,14 @@ export async function POST(req: NextRequest) {
   // Answering Machine Detection. Zonder deze check praat de assistent tegen
   // een voicemail en tellen we dat als een geslaagd gesprek.
   //
-  // De detectie draait synchroon (machineDetection: "Enable" in worker.ts),
-  // dus AnsweredBy staat al in deze POST. Onder "Enable" zijn de waarden
-  // human, machine_start, fax en unknown; onder het eerdere DetectMessageEnd
-  // waren dat machine_end_beep, machine_end_silence en machine_end_other.
-  // De prefix-check dekt beide reeksen, dus die kon blijven staan.
+  // LET OP: de detectie staat standaard UIT (zie AMD in src/worker.ts). Dan
+  // stuurt Twilio geen AnsweredBy mee, valt deze check op een lege string, en
+  // gaat het gesprek gewoon door — precies de bedoeling.
+  //
+  // Staat AMD_ENABLED=true, dan draait de detectie synchroon en staat AnsweredBy
+  // al in deze POST. Onder "Enable" zijn de waarden human, machine_start, fax en
+  // unknown; onder het eerdere DetectMessageEnd waren dat machine_end_beep,
+  // machine_end_silence en machine_end_other. De prefix-check dekt beide reeksen.
   //
   // unknown = detectie kwam er niet uit binnen machineDetectionTimeout. Die
   // behandelen we bewust als mens: hooguit praten we tegen een voicemail,

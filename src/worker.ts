@@ -26,6 +26,27 @@ import { startRelayServer } from "./relay/server.js";
 const TICK_MS = 15_000;
 
 /**
+ * Antwoordapparaat-detectie (AMD). Standaard UIT.
+ *
+ * Twilio's 'Enable' bleek een echt persoon met enige regelmaat aan te zien voor
+ * een antwoordapparaat: het gesprek werd na een paar seconden afgekapt terwijl
+ * de beller gewoon aan het praten was. Iemand die opneemt in zijn gezicht
+ * ophangen is erger dan een keer tegen een voicemail praten, dus staat het uit.
+ *
+ * Met AMD uit haalt Twilio de TwiML meteen op — geen detectie om op te wachten —
+ * en begint de assistent direct te praten zodra er wordt opgenomen. Het veld
+ * AnsweredBy komt dan niet mee; de TwiML-route behandelt een lege waarde als
+ * mens, dus die hoeft er niet voor te veranderen.
+ *
+ * Wat we opgeven: er wordt tegen voicemails gepraat, en die pogingen tellen mee.
+ * Het vangnet daarvoor is de assistent zelf — zijn systeemprompt zegt bij een
+ * antwoordapparaat niets in te spreken en meteen af te ronden met 'partial'.
+ *
+ * Aanzetten kan zonder deploy: AMD_ENABLED=true.
+ */
+const AMD = (process.env.AMD_ENABLED ?? "false").trim().toLowerCase() === "true";
+
+/**
  * Hoe vaak we de Netlify-function wakker porren.
  *
  * Drie minuten zit ruim onder de tijd waarna zo'n function koud wordt, en het
@@ -124,22 +145,10 @@ async function placeCall(p: ClaimedPartner) {
     statusCallback: `${process.env.PUBLIC_BASE_URL}/api/twilio-status`,
     statusCallbackEvent: ["initiated", "answered", "completed"],
 
-    // Zonder dit praat de assistent tegen een voicemail en tel je dat als 'gedaan'.
-    //
-    // 'Enable' in plaats van 'DetectMessageEnd': Twilio haalt de TwiML pas op
-    // als de detectie klaar is, en DetectMessageEnd wachtte bij een mens tot
-    // die was uitgesproken en er stilte viel. Dat waren de seconden stilte na
-    // opnemen. 'Enable' beslist zodra het begin van de begroeting genoeg zegt.
-    // De prijs is een minder betrouwbare voicemail-detectie; dat accepteren we.
-    machineDetection: "Enable",
-    // Was 15s. Dat is de bovengrens waarna Twilio het opgeeft en 'unknown'
-    // teruggeeft — dus in het slechtste geval 15 seconden stilte. Nu we niet
-    // meer op het einde van de begroeting wachten, is 5s ruim genoeg, en een
-    // twijfelgeval kost nog maar een derde van die stilte. Bij 'unknown'
-    // behandelt de TwiML-route het gesprek als mens, en dat is de juiste
-    // uitkomst: liever een keer tegen een voicemail praten dan iemand die wél
-    // opneemt in zijn gezicht ophangen.
-    machineDetectionTimeout: 5,
+    // Antwoordapparaat-detectie, standaard uit. Zie AMD bovenaan dit bestand.
+    ...(AMD
+      ? { machineDetection: "Enable" as const, machineDetectionTimeout: 5 }
+      : {}),
 
     timeout: 25,
     record: process.env.RECORD_CALLS === "true",
@@ -229,6 +238,11 @@ async function main() {
     Number(process.env.PORT ?? process.env.RELAY_PORT ?? 8081),
   );
   console.log("[worker] gestart");
+  console.log(
+    AMD
+      ? "[amd] antwoordapparaat-detectie AAN (machineDetection=Enable)"
+      : "[amd] antwoordapparaat-detectie UIT — de assistent praat ook tegen een voicemail",
+  );
 
   const timer = setInterval(tick, TICK_MS);
   void tick();
