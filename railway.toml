@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Railway-configuratie voor de worker-service.
+#
+# De worker is geen web-service: hij wacht niet op verkeer maar draait continu
+# een belronde. Zonder deze declaratie behandelt Railway hem als een gewone
+# web-service en stopt hij de container als er even niets binnenkomt — waarna
+# de worker herstart en meteen opnieuw begint te bellen.
+#
+# TOML in plaats van JSON omdat je hier kunt uitleggen wáárom elke regel er
+# staat. Railway leest railway.toml en railway.json allebei uit de repo-root.
+# ---------------------------------------------------------------------------
+
+[build]
+# De bestaande Dockerfile blijft de bron van waarheid voor de build.
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Eén instantie. claimPartners() gebruikt 'for update skip locked', dus twee
+# workers zouden elkaar niet in de weg zitten, maar bij honderd partners is er
+# geen reden om te schalen — en één proces houdt de logs leesbaar.
+numReplicas = 1
+
+# Een worker hoort altijd te draaien: na een crash of een herstart van het
+# platform meteen weer op.
+restartPolicyType = "ALWAYS"
+
+# App Sleeping expliciet uit. Dit is het veld achter Railway's 'idle detection';
+# staat het aan, dan wordt een service zonder inkomend verkeer stilgezet.
+sleepApplication = false
+
+# Bewust GEEN startCommand hier. Railway voert die via een shell uit, en dan is
+# sh weer PID 1 — precies het probleem dat de Dockerfile net heeft opgelost met
+# CMD ["node", "dist/worker.js"] in exec-vorm. Door dit veld leeg te laten
+# blijft die CMD ongewijzigd het startcommando.
+
+# Bewust GEEN healthcheckPath. Een mislukte healthcheck is op Railway zelf een
+# reden om de container te stoppen; de worker heeft er geen nodig. GET /health
+# op de relay-poort blijft gewoon bestaan om handmatig te kunnen kijken.
