@@ -5,6 +5,11 @@ import { NextRequest } from "next/server";
  *
  * Twilio haalt dit op zodra er wordt opgenomen. We geven ConversationRelay
  * terug, met de partner-id als parameter zodat de websocket weet wie hij belt.
+ *
+ * De stem komt van Google, de TTS-provider die ConversationRelay zonder
+ * externe koppeling of voice-id ondersteunt. ElevenLabs stond hier eerder,
+ * maar dat vraagt een eigen account én en-US — geen optie voor een Nederlands
+ * gesprek. Wil je een mannenstem: nl-NL-Chirp3-HD-Charon.
  */
 export async function POST(req: NextRequest) {
   const partnerId = req.nextUrl.searchParams.get("partner");
@@ -22,8 +27,8 @@ export async function POST(req: NextRequest) {
     <ConversationRelay
       url="${process.env.RELAY_WS_URL}"
       language="nl-NL"
-      ttsProvider="ElevenLabs"
-      voice="${process.env.TTS_VOICE_ID}"
+      ttsProvider="Google"
+      voice="nl-NL-Chirp3-HD-Kore"
       transcriptionProvider="Deepgram"
       speechModel="nova-3"
       interruptible="true"
