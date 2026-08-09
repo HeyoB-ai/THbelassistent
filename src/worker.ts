@@ -116,8 +116,21 @@ async function placeCall(p: ClaimedPartner) {
     statusCallbackEvent: ["initiated", "answered", "completed"],
 
     // Zonder dit praat de assistent tegen een voicemail en tel je dat als 'gedaan'.
-    machineDetection: "DetectMessageEnd",
-    machineDetectionTimeout: 15,
+    //
+    // 'Enable' in plaats van 'DetectMessageEnd': Twilio haalt de TwiML pas op
+    // als de detectie klaar is, en DetectMessageEnd wachtte bij een mens tot
+    // die was uitgesproken en er stilte viel. Dat waren de seconden stilte na
+    // opnemen. 'Enable' beslist zodra het begin van de begroeting genoeg zegt.
+    // De prijs is een minder betrouwbare voicemail-detectie; dat accepteren we.
+    machineDetection: "Enable",
+    // Was 15s. Dat is de bovengrens waarna Twilio het opgeeft en 'unknown'
+    // teruggeeft — dus in het slechtste geval 15 seconden stilte. Nu we niet
+    // meer op het einde van de begroeting wachten, is 5s ruim genoeg, en een
+    // twijfelgeval kost nog maar een derde van die stilte. Bij 'unknown'
+    // behandelt de TwiML-route het gesprek als mens, en dat is de juiste
+    // uitkomst: liever een keer tegen een voicemail praten dan iemand die wél
+    // opneemt in zijn gezicht ophangen.
+    machineDetectionTimeout: 5,
 
     timeout: 25,
     record: process.env.RECORD_CALLS === "true",
