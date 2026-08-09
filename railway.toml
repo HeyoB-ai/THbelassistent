@@ -16,11 +16,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Eén instantie. claimPartners() gebruikt 'for update skip locked', dus twee
-# workers zouden elkaar niet in de weg zitten, maar bij honderd partners is er
-# geen reden om te schalen — en één proces houdt de logs leesbaar.
-numReplicas = 1
-
 # Een worker hoort altijd te draaien: na een crash of een herstart van het
 # platform meteen weer op.
 restartPolicyType = "ALWAYS"
@@ -37,3 +32,23 @@ sleepApplication = false
 # Bewust GEEN healthcheckPath. Een mislukte healthcheck is op Railway zelf een
 # reden om de container te stoppen; de worker heeft er geen nodig. GET /health
 # op de relay-poort blijft gewoon bestaan om handmatig te kunnen kijken.
+
+# ---------------------------------------------------------------------------
+# Regio en aantal instanties.
+#
+# EU West (Amsterdam). De worker verwerkt persoonsgegevens van partners en
+# schrijft naar een EU-database; dan hoort de rekenkant er ook te staan. Zonder
+# deze regel zet Railway hem in US West. Scheelt bovendien latency naar de
+# EU-Postgres, en dat telt in een live telefoongesprek.
+#
+# In dit blok staat ook het aantal instanties: multiRegionConfig vervangt het
+# losse numReplicas-veld, en de twee kunnen niet naast elkaar bestaan.
+# Eén instantie is genoeg. claimPartners() gebruikt 'for update skip locked',
+# dus meerdere workers zouden elkaar niet in de weg zitten, maar bij honderd
+# partners valt er niets te schalen — en één proces houdt de logs leesbaar.
+#
+# LET OP: in TOML moet dit sub-blok ná alle losse sleutels van [deploy] staan.
+# Alles wat je hieronder zet, hoort bij de regio en niet meer bij [deploy].
+# ---------------------------------------------------------------------------
+[deploy.multiRegionConfig."europe-west4-drams3a"]
+numReplicas = 1
