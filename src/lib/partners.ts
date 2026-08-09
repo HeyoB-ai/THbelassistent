@@ -10,7 +10,7 @@ import { nextAttemptAt } from "./callWindow.js";
  */
 export async function releasePartner(
   partnerId: string,
-  outcome: "no_answer" | "voicemail" | "failed" | "gatekeeper",
+  outcome: "no_answer" | "voicemail" | "failed" | "gatekeeper" | "no_time",
   campaign: Pick<Campaign, "max_attempts" | "window_start" | "window_end">,
 ) {
   const p = await one<{ attempts: number }>(

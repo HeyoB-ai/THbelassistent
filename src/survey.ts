@@ -117,11 +117,13 @@ export function toolInputSchema() {
       ...properties,
       completion: {
         type: "string",
-        enum: ["completed", "partial", "refused"],
+        enum: ["completed", "partial", "refused", "no_time"],
         description:
           "completed = alle verplichte vragen beantwoord. " +
           "partial = gesprek eindigde voortijdig. " +
-          "refused = partner wil niet meedoen.",
+          "refused = partner wil niet meedoen aan de enquête. " +
+          "no_time = partner heeft nu geen tijd, maar wijst de enquête niet af; " +
+          "we bellen later terug. Gebruik no_time nooit als iemand écht weigert.",
       },
       confidence: {
         type: "string",

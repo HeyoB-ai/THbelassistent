@@ -16,11 +16,36 @@ export type PartnerContext = {
 export type Turn = { role: "user" | "assistant"; content: string; at: string };
 
 export type SubmitPayload = {
-  completion: "completed" | "partial" | "refused";
+  completion: "completed" | "partial" | "refused" | "no_time";
   confidence: "high" | "low";
   callback_requested_at?: string;
   [key: string]: unknown;
 };
+
+/**
+ * De opening staat hier als vaste tekst en gaat NIET langs het model.
+ *
+ * Een LLM-aanroep kostte hier zo'n zeven seconden stilte nadat de gebelde
+ * opneemt — genoeg om op te hangen. De tekst is toch woordelijk voorgeschreven,
+ * dus er valt niets te genereren. De relay spreekt dit uit zodra de verbinding
+ * staat; het model neemt het gesprek daarna over.
+ *
+ * De AI-vermelding is wettelijk verplicht (EU AI Act, art. 50) en staat daarom
+ * in de eerste zin.
+ */
+export const OPENING =
+  `Goedendag, u spreekt met de digitale AI-assistent van ${ORG}. ` +
+  "We zetten AI in om enerzijds een test uit te voeren, en anderzijds omdat we " +
+  "een aantal gegevens van u willen nagaan. We hebben u hier vorige week een " +
+  "mail over gestuurd. Heeft u twee minuten om een paar korte vragen te " +
+  "beantwoorden? De gegevens worden vertrouwelijk behandeld.";
+
+/** Woordelijke afronding als de gebelde nu geen tijd heeft. */
+export const NO_TIME_CLOSING =
+  "Geen probleem, ik begrijp het. U heeft van ons ook een mail ontvangen met " +
+  "een link waarmee u het zelf kunt invullen wanneer het u beter uitkomt. " +
+  "Anders proberen wij u op een ander moment nog eens te bereiken. " +
+  "Een prettige dag verder.";
 
 const SUBMIT_TOOL = {
   name: "submit_survey",
@@ -35,7 +60,9 @@ const SUBMIT_TOOL = {
 function systemPrompt(p: PartnerContext) {
   const script = QUESTIONS.map(
     (q, i) =>
-      `${i + 1}. [${q.key}]${q.required ? "" : " (optioneel)"} ` +
+      // "(optioneel)" sloeg eerder op de vraag zelf; het model liet vraag 2
+      // daarom weg. Optioneel is alleen het ANTWOORD.
+      `${i + 1}. [${q.key}]${q.required ? "" : " (het antwoord mag leeg blijven — de vraag stel je wél)"} ` +
       spokenText(q, { partner: p.name, org: ORG }) +
       (q.confirm ? "\n   → Lees het antwoord hardop terug ter controle voordat je verder gaat." : "") +
       (q.options
@@ -45,13 +72,22 @@ function systemPrompt(p: PartnerContext) {
 
   return `Je voert een kort telefonisch interview namens ${ORG} met hun partner ${p.name}.
 
-OPENING — verplicht, woordelijk, en nooit overslaan:
-"Goedendag, u spreekt met de digitale AI-assistent van ${ORG}. We zetten AI in om enerzijds een test uit te voeren, en anderzijds omdat we een aantal gegevens van u willen nagaan. We hebben u hier vorige week een mail over gestuurd. Heeft u twee minuten om een paar korte vragen te beantwoorden? De gegevens worden vertrouwelijk behandeld."
+DE OPENING IS AL UITGESPROKEN
+De begroeting is zojuist voorgelezen en staat als jouw eerste beurt in de gespreksgeschiedenis:
+"${OPENING}"
+Begroet dus niet opnieuw en herhaal deze tekst niet. Reageer op wat de gebelde erop antwoordt.
+Vraagt iemand of hij met een mens spreekt, bevestig dan meteen en zonder omhaal dat je een AI bent en geen mens.
 
-Zeg dit letterlijk, ook als iemand je onderbreekt. Dat je een AI bent moet altijd klinken; dat is wettelijk verplicht. Vraagt iemand of hij met een mens spreekt, bevestig dan meteen en zonder omhaal dat je een AI bent en geen mens.
-
-DE VRAGEN — in deze volgorde, één tegelijk
+DE VRAGEN — alle drie, in deze volgorde, één tegelijk
 ${script}
+
+Stel alle drie de vragen. Sla er nooit één over — ook niet als het antwoord optioneel is, ook niet als je denkt het antwoord al te kennen, en ook niet om het gesprek korter te maken. Na het personeelsaantal komt eerst de contactpersoon voor de bijdrage, en pas daarna de vraag over AI. Ga pas door naar de volgende vraag als de vorige beantwoord is of de partner er duidelijk geen antwoord op wil geven.
+
+NU GEEN TIJD — niet hetzelfde als weigeren
+Zegt de gebelde dat hij nu geen tijd heeft, dat het slecht uitkomt, of antwoordt hij "nee" op de vraag of hij twee minuten heeft, zeg dan woordelijk:
+"${NO_TIME_CLOSING}"
+Rond daarna direct af met submit_survey en completion "no_time". Dring niet aan en probeer niet alsnog één vraag te stellen.
+Let op het verschil: wie de enquête zelf afwijst ("ik doe niet mee", "geen interesse") krijgt completion "refused". Wie alleen nú niet kan, krijgt "no_time" — die bellen we later terug.
 
 VERTAKKING BIJ VRAAG 3 (ai_interest)
 - Antwoordt de partner JA, zeg dan: "Een van mijn collega's zal daar contact over opnemen." Leg vast: ai_interest = "yes".
@@ -94,13 +130,17 @@ export class SurveyAgent {
     return this.run();
   }
 
-  /** De openingszin, zonder dat de beller al iets gezegd heeft. */
-  async open(): Promise<string> {
-    this.messages.push({
-      role: "user",
-      content: "[De telefoon is opgenomen. Begin het gesprek met de verplichte opening.]",
-    });
-    return this.run();
+  /**
+   * De vaste opening, zonder LLM-aanroep — de gebelde hoort dit meteen.
+   *
+   * De tekst gaat wel als eerste assistent-beurt de geschiedenis in, zodat het
+   * model weet wat er al gezegd is en niet opnieuw begint te begroeten.
+   */
+  openScripted(): string {
+    this.messages.push({ role: "user", content: "[De telefoon is opgenomen.]" });
+    this.messages.push({ role: "assistant", content: OPENING });
+    this.transcript.push({ role: "assistant", content: OPENING, at: new Date().toISOString() });
+    return OPENING;
   }
 
   private async run(): Promise<string> {

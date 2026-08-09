@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { q, one, getCampaign, logEvent } from "../lib/db.js";
-import { SurveyAgent, type PartnerContext } from "./agent.js";
+import { SurveyAgent, OPENING, type PartnerContext } from "./agent.js";
 import { AnswerSchema } from "../survey.js";
 import { releasePartner } from "../lib/partners.js";
 
@@ -111,12 +111,17 @@ export async function startRelayServer(port: number) {
 }
 
 async function handleSetup(ws: WebSocket, msg: any): Promise<Session | null> {
+  // Eerst praten, dan pas opzoeken. Alles wat hiervóór gebeurt is stilte voor
+  // iemand die net heeft opgenomen; de opening hangt niet van de partner af.
+  speak(ws, OPENING);
+
   const partnerId = msg.customParameters?.partnerId;
   const partner = await one<any>(
     `select id, name, contact_name, known_headcount from partners where id = $1`,
     [partnerId],
   );
   if (!partner) {
+    console.error(`[relay] onbekende partner in setup: ${partnerId}`);
     ws.send(JSON.stringify({ type: "end" }));
     return null;
   }
@@ -142,8 +147,9 @@ async function handleSetup(ws: WebSocket, msg: any): Promise<Session | null> {
     closed: false,
   };
 
-  const opening = await session.agent.open();
-  speak(ws, opening);
+  // De opening is hierboven al uitgesproken; dit zet 'm in de geschiedenis van
+  // het model zodat het niet opnieuw begint te begroeten.
+  session.agent.openScripted();
   return session;
 }
 
@@ -186,8 +192,8 @@ function safeEnd(ws: WebSocket, session: Session | null, outcome: string) {
 }
 
 /**
- * Gesprek afronden: transcript wegschrijven, antwoorden valideren, partner
- * op de juiste status zetten en de bevestigingsmail versturen.
+ * Gesprek afronden: transcript wegschrijven, antwoorden valideren en de partner
+ * op de juiste status zetten.
  */
 async function finalize(session: Session, reason: string) {
   if (session.closed) return;
@@ -202,11 +208,13 @@ async function finalize(session: Session, reason: string) {
       ? "completed"
       : submitted?.completion === "refused"
         ? "refused"
-        : submitted?.completion === "partial"
-          ? "partial"
-          : reason === "aborted"
-            ? "aborted"
-            : "failed";
+        : submitted?.completion === "no_time"
+          ? "no_time"
+          : submitted?.completion === "partial"
+            ? "partial"
+            : reason === "aborted"
+              ? "aborted"
+              : "failed";
 
   await q(
     `update call_attempts
@@ -222,6 +230,16 @@ async function finalize(session: Session, reason: string) {
       [session.partner.id, submitted.callback_requested_at],
     );
     await logEvent("callback_scheduled", { at: submitted.callback_requested_at }, session.partner.id);
+    return;
+  }
+
+  // --- Nu geen tijd ------------------------------------------------------
+  // Bewust géén 'refused' en géén do_not_call: deze partner is gewoon
+  // benaderbaar, alleen niet nu. releasePartner zet 'm terug in de wachtrij
+  // met een volgend belmoment, binnen dezelfde max_attempts. Zijn persoonlijke
+  // link naar het webformulier blijft ook gewoon werken.
+  if (outcome === "no_time") {
+    await releasePartner(session.partner.id, "no_time", campaign);
     return;
   }
 

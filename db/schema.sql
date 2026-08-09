@@ -74,7 +74,7 @@ create table if not exists call_attempts (
 
   outcome text
     check (outcome in ('completed','partial','refused','no_answer',
-                       'voicemail','gatekeeper','failed','aborted')),
+                       'voicemail','gatekeeper','failed','aborted','no_time')),
 
   answered_by   text,        -- Twilio AMD: human / machine_start / fax / unknown
   transcript    jsonb,       -- [{role, text, at}]
@@ -83,6 +83,15 @@ create table if not exists call_attempts (
 );
 
 create index if not exists call_attempts_partner_idx on call_attempts (partner_id, started_at desc);
+
+-- 'no_time' is later toegevoegd: de gebelde nam op maar had geen tijd. Dat is
+-- iets anders dan weigeren — hij blijft in de bellijst. Op een bestaande
+-- database wordt het 'create table' hierboven overgeslagen, dus de check moet
+-- apart bijgewerkt worden. Deze twee regels kun je zo vaak draaien als je wilt.
+alter table call_attempts drop constraint if exists call_attempts_outcome_check;
+alter table call_attempts add constraint call_attempts_outcome_check
+  check (outcome in ('completed','partial','refused','no_answer',
+                     'voicemail','gatekeeper','failed','aborted','no_time'));
 
 -- ---------------------------------------------------------------------------
 -- Antwoorden: één rij per partner, laatste versie wint
