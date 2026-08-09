@@ -23,6 +23,12 @@ export type Question = {
   input: "number" | "text" | "choice" | "boolean";
   options?: { value: string; label: string }[];
   required: boolean;
+  /**
+   * Vervolgvraag: alleen stellen als deze voorwaarde geldt. De tekst gaat
+   * woordelijk de systeemprompt in, dus schrijf 'm als instructie aan de
+   * assistent. Op het webformulier staat het veld gewoon altijd.
+   */
+  askWhen?: string;
   /** Assistent leest het antwoord terug ter controle. Aan voor alles wat telt. */
   confirm: boolean;
 };
@@ -39,13 +45,13 @@ export const QUESTIONS: Question[] = [
     hint: "Personen in vaste of tijdelijke dienst, niet omgerekend naar fte. Oproepkrachten en stagiairs tellen niet mee.",
     input: "number",
     required: true,
-    confirm: true, // dit cijfer raakt de bijdrage — altijd teruglezen
+    confirm: true, // dit cijfer raakt de partnerbijdrage — altijd teruglezen
   },
   {
     key: "contact_for_billing",
     spoken:
-      "Wie kunnen we bij {{partner}} het beste benaderen over de jaarlijkse bijdrage?",
-    label: "Contactpersoon voor de bijdrage",
+      "Wie kunnen we bij {{partner}} het beste benaderen over de jaarlijkse partnerbijdrage?",
+    label: "Contactpersoon voor de partnerbijdrage",
     input: "text",
     required: false,
     confirm: false,
@@ -67,6 +73,18 @@ export const QUESTIONS: Question[] = [
     required: true,
     confirm: false,
   },
+  {
+    key: "ai_contact",
+    spoken: "Met wie kan mijn collega hierover het beste contact opnemen?",
+    label: "Contactpersoon voor AI",
+    hint: "Alleen invullen als u interesse heeft in AI.",
+    input: "text",
+    required: false,
+    // Zonder naam heeft de collega die opvolgt wel een 'ja' maar niemand om te
+    // bellen. Bij 'nee' is de vraag zinloos, dus die slaan we over.
+    askWhen: 'de partner JA antwoordde op ai_interest — bij "nee" sla je hem over',
+    confirm: false,
+  },
 ];
 
 /**
@@ -80,6 +98,7 @@ export const AnswerSchema = z.object({
   headcount: z.number().int().min(0).max(100_000),
   contact_for_billing: z.string().max(200).optional(),
   ai_interest: z.enum(["yes", "no"]).optional(),
+  ai_contact: z.string().max(200).optional(),
 });
 
 export type Answers = z.infer<typeof AnswerSchema>;

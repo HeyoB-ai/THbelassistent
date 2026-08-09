@@ -3,7 +3,7 @@ import { q, one, logEvent } from "@/lib/db";
 
 /**
  * De partner klikt "Ja, dit klopt" in de bevestigingsmail.
- * Pas hier gaat de status naar 'verified' — en pas dat telt voor de bijdrage.
+ * Pas hier gaat de status naar 'verified' — en pas dat telt voor de partnerbijdrage.
  */
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("t");

@@ -15,6 +15,7 @@ export async function submitSelfReport(token: string, form: FormData) {
     headcount: Number(form.get("headcount")),
     contact_for_billing: String(form.get("contact_for_billing") ?? "") || undefined,
     ai_interest: aiInterest === "yes" || aiInterest === "no" ? aiInterest : undefined,
+    ai_contact: String(form.get("ai_contact") ?? "") || undefined,
   };
 
   const parsed = AnswerSchema.safeParse(raw);

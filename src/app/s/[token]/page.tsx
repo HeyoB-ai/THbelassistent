@@ -55,7 +55,7 @@ export default async function Page({ params, searchParams }: Props) {
         <div className="card">
           <h2>Dit hebben we van u</h2>
           <p style={{ color: "var(--mute)", fontSize: 15 }}>
-            U kunt het hieronder aanpassen zolang de bijdrage nog niet is
+            U kunt het hieronder aanpassen zolang de partnerbijdrage nog niet is
             vastgesteld.
           </p>
           <SurveyForm
@@ -69,7 +69,7 @@ export default async function Page({ params, searchParams }: Props) {
         <div className="card">
           <p style={{ marginTop: 0 }}>
             Beste {partner.contact_name ?? "partner"}, dit duurt ongeveer twee
-            minuten. De bijdrage die u betaalt hangt af van uw personeelsaantal,
+            minuten. De partnerbijdrage die u betaalt hangt af van uw personeelsaantal,
             dus we willen dat één keer per jaar goed vastleggen.
           </p>
           <SurveyForm

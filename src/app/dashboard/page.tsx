@@ -26,9 +26,10 @@ const DONE = ["verified", "self_reported"];
 
 const CONTACT_KEY = "contact_for_billing";
 const AI_KEY = "ai_interest";
+const AI_CONTACT_KEY = "ai_contact";
 
 /** Vragen met een eigen kolom; de rest komt op de regel eronder te staan. */
-const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY];
+const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY, AI_CONTACT_KEY];
 
 /**
  * De overige antwoorden, in de volgorde van de vragenlijst. Wordt er een vraag
@@ -191,7 +192,7 @@ export default async function Dashboard() {
                     <td className="num">{r.reported_headcount ?? "—"}</td>
                     <td>{answerLabel(CONTACT_KEY, r.answers?.[CONTACT_KEY]) || "—"}</td>
                     {/* Het bellijstje voor de collega die AI-opvolging doet:
-                        'ja' springt eruit, de contactpersoon staat ernaast. */}
+                        'ja' springt eruit, met de opgegeven naam erachter. */}
                     <td
                       style={{
                         color: r.answers?.[AI_KEY] === "yes" ? "var(--signal)" : "var(--mute)",
@@ -199,6 +200,11 @@ export default async function Dashboard() {
                       }}
                     >
                       {answerLabel(AI_KEY, r.answers?.[AI_KEY]) || "—"}
+                      {answerLabel(AI_CONTACT_KEY, r.answers?.[AI_CONTACT_KEY]) && (
+                        <span style={{ color: "var(--mute)", fontWeight: 400 }}>
+                          {" "}— {answerLabel(AI_CONTACT_KEY, r.answers?.[AI_CONTACT_KEY])}
+                        </span>
+                      )}
                     </td>
                     <td className="num" style={{ color: "var(--mute)" }}>
                       {r.last_attempt_at

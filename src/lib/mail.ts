@@ -39,7 +39,7 @@ export async function sendAnnouncement(partnerId: string) {
 <p>Beste ${p.contact_name ?? p.name},</p>
 
 <p>We actualiseren de personeelsaantallen van onze partners, omdat de jaarlijkse
-bijdrage daarop gebaseerd is. Dat kost u ongeveer twee minuten.</p>
+partnerbijdrage daarop gebaseerd is. Dat kost u ongeveer twee minuten.</p>
 
 <p><strong>U kunt het nu meteen zelf invullen:</strong></p>
 ${button(link, "Gegevens doorgeven")}
