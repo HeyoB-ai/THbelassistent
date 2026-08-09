@@ -183,27 +183,41 @@ async function abortLiveCalls() {
  * stilte voor de gebelde — gemeten 3150ms bij de eerste aanroep tegen 20-500ms
  * daarna. Deze ping voorkomt dat die eerste aanroep ooit een echt gesprek is.
  *
+ * We tikken /api/twiml zélf aan en niet een aparte lichte route: die zit in een
+ * andere function en hield deze dus niet warm — geprobeerd, geen effect. Een
+ * GET geeft hier 405, want de route exporteert alleen POST, maar de function
+ * draait er wel voor. Dat is precies wat we willen: warm zonder de
+ * POST-afhandeling met z'n AnsweredBy-logica te raken.
+ *
  * Faalt de ping, dan is dat geen reden om iets af te breken: het gesprek werkt
  * ook zonder, alleen trager. Daarom alleen loggen.
  */
+const WARM_URL_PATH = "/api/twiml";
+
 async function warmTwiml() {
   const base = process.env.PUBLIC_BASE_URL;
   if (!base) return;
 
   const started = Date.now();
   try {
-    const res = await fetch(`${base}/api/warm`, {
+    const res = await fetch(`${base}${WARM_URL_PATH}`, {
       headers: { "user-agent": "thbelassistent-worker/warm" },
       signal: AbortSignal.timeout(10_000),
     });
     const ms = Date.now() - started;
-    // Alleen loggen als het traag was: dan stond de function dus tóch koud en
-    // klopt er iets niet aan het interval. Elke ping loggen is ruis.
-    if (!res.ok || ms > 1000) {
-      console.log(`[warm] ${res.status} in ${ms}ms${ms > 1000 ? " — function stond koud" : ""}`);
+
+    // 405 is hier het verwachte antwoord en dus geslaagd: de function heeft
+    // gedraaid, alleen accepteert de route geen GET.
+    const warmed = res.ok || res.status === 405;
+
+    if (!warmed) {
+      console.error(`[warm] onverwachte status ${res.status} in ${ms}ms — function niet warm gehouden`);
+    } else if (ms > 1000) {
+      // Dan stond de function tóch koud en klopt er iets niet aan het interval.
+      console.log(`[warm] ${res.status} in ${ms}ms — function stond koud`);
     }
   } catch (err) {
-    console.error(`[warm] ping naar ${base}/api/warm mislukt:`, err);
+    console.error(`[warm] ping naar ${base}${WARM_URL_PATH} mislukt:`, err);
   }
 }
 
@@ -223,7 +237,7 @@ async function main() {
   // uitgaat — de tick hierboven kan binnen enkele seconden al bellen.
   const warmBase = process.env.PUBLIC_BASE_URL;
   if (warmBase) {
-    console.log(`[warm] houdt ${warmBase}/api/warm warm, elke ${WARM_MS / 1000}s`);
+    console.log(`[warm] houdt ${warmBase}${WARM_URL_PATH} warm, elke ${WARM_MS / 1000}s`);
   } else {
     console.warn("[warm] PUBLIC_BASE_URL ontbreekt — geen warmhoud-ping, /api/twiml blijft koud starten");
   }
