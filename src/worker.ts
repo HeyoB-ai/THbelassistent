@@ -24,6 +24,15 @@ import { startRelayServer } from "./relay/server.js";
  */
 
 const TICK_MS = 15_000;
+
+/**
+ * Hoe vaak we de Netlify-function wakker porren.
+ *
+ * Drie minuten zit ruim onder de tijd waarna zo'n function koud wordt, en het
+ * kost twintig verzoekjes per uur. Meeliften op de tick van 15 seconden zou
+ * hetzelfde bereiken tegen twaalf keer zoveel verkeer en logruis.
+ */
+const WARM_MS = 3 * 60_000;
 const client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
 
 let ticking = false;
@@ -167,6 +176,37 @@ async function abortLiveCalls() {
   if (rows.length) await logEvent("campaign_stopped_calls_aborted", { count: rows.length });
 }
 
+/**
+ * Houdt de Netlify-function warm die /api/twiml serveert.
+ *
+ * Twilio haalt de TwiML op nadat er is opgenomen, dus een cold start daar is
+ * stilte voor de gebelde — gemeten 3150ms bij de eerste aanroep tegen 20-500ms
+ * daarna. Deze ping voorkomt dat die eerste aanroep ooit een echt gesprek is.
+ *
+ * Faalt de ping, dan is dat geen reden om iets af te breken: het gesprek werkt
+ * ook zonder, alleen trager. Daarom alleen loggen.
+ */
+async function warmTwiml() {
+  const base = process.env.PUBLIC_BASE_URL;
+  if (!base) return;
+
+  const started = Date.now();
+  try {
+    const res = await fetch(`${base}/api/warm`, {
+      headers: { "user-agent": "thbelassistent-worker/warm" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const ms = Date.now() - started;
+    // Alleen loggen als het traag was: dan stond de function dus tóch koud en
+    // klopt er iets niet aan het interval. Elke ping loggen is ruis.
+    if (!res.ok || ms > 1000) {
+      console.log(`[warm] ${res.status} in ${ms}ms${ms > 1000 ? " — function stond koud" : ""}`);
+    }
+  } catch (err) {
+    console.error(`[warm] ping naar ${base}/api/warm mislukt:`, err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 async function main() {
@@ -179,9 +219,21 @@ async function main() {
   const timer = setInterval(tick, TICK_MS);
   void tick();
 
+  // Meteen één keer, zodat de function al warm is voordat het eerste gesprek
+  // uitgaat — de tick hierboven kan binnen enkele seconden al bellen.
+  const warmBase = process.env.PUBLIC_BASE_URL;
+  if (warmBase) {
+    console.log(`[warm] houdt ${warmBase}/api/warm warm, elke ${WARM_MS / 1000}s`);
+  } else {
+    console.warn("[warm] PUBLIC_BASE_URL ontbreekt — geen warmhoud-ping, /api/twiml blijft koud starten");
+  }
+  const warmTimer = setInterval(() => void warmTwiml(), WARM_MS);
+  void warmTwiml();
+
   const shutdown = async () => {
     console.log("[worker] shutdown gestart");
     clearInterval(timer);
+    clearInterval(warmTimer);
     try {
       await pool.end();
     } catch (err) {
