@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && npm run worker:build",
     "start": "next start",
     "worker": "tsx src/worker.ts",
     "worker:build": "tsc -p tsconfig.worker.json",
@@ -23,6 +23,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "twilio": "^5.5.0",
+    "typescript": "^5.7.0",
     "ws": "^8.18.0",
     "xlsx": "^0.18.5",
     "zod": "^3.25.0"
@@ -34,7 +35,6 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/ws": "^8.5.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "tsx": "^4.19.0"
   }
 }
