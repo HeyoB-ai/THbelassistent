@@ -150,3 +150,20 @@ export const LABELS: Record<string, string> = Object.fromEntries([
     (q.options ?? []).map((o) => [`${q.key}:${o.value}`, o.label]),
   ),
 ]);
+
+/**
+ * Eén opgeslagen antwoord, klaar om te tonen. Een keuze als "contracted" is
+ * voor een lezer nietszeggend; hier wordt dat "Alleen vast en tijdelijk
+ * personeel". Leeg antwoord geeft een lege string, zodat de aanroeper zelf
+ * bepaalt wat er dan komt te staan ("—" op het scherm, niets in Excel).
+ *
+ * Het dashboard en de Excel-export gebruiken dit allebei, zodat een gewijzigde
+ * vraag of een nieuwe keuze-optie meteen op beide plekken goed staat.
+ */
+export function answerLabel(key: string, value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "ja" : "nee";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  return LABELS[`${key}:${raw}`] ?? raw;
+}

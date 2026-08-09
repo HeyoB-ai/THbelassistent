@@ -127,6 +127,11 @@ select
   r.answers ->> 'headcount' as reported_headcount,
   r.confidence,
   r.confirmed_at,
-  (select max(started_at) from call_attempts ca where ca.partner_id = p.id) as last_attempt_at
+  (select max(started_at) from call_attempts ca where ca.partner_id = p.id) as last_attempt_at,
+  -- Alle antwoorden, niet alleen het personeelsaantal: het dashboard en de
+  -- Excel-export leiden hun kolommen af uit src/survey.ts en hebben de hele
+  -- jsonb nodig. Nieuwe kolommen horen hierónder, want 'create or replace
+  -- view' staat alleen toe dat je achteraan uitbreidt.
+  r.answers
 from partners p
 left join responses r on r.partner_id = p.id;

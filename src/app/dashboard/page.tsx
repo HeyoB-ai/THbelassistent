@@ -1,5 +1,8 @@
-import { q, getCampaign } from "@/lib/db";
+import { Fragment, type ReactNode } from "react";
+import { q, getCampaign, type Campaign } from "@/lib/db";
 import { whyNotCallable } from "@/lib/callWindow";
+import { QUESTIONS, answerLabel } from "@/survey";
+import { statusLabel } from "@/lib/status";
 import { Controls } from "./Controls";
 
 export const dynamic = "force-dynamic";
@@ -15,15 +18,44 @@ type Row = {
   confidence: string | null;
   confirmed_at: string | null;
   last_attempt_at: string | null;
+  /** Alle enquête-antwoorden zoals opgeslagen; null als er nog niets binnen is. */
+  answers: Record<string, unknown> | null;
 };
 
 const DONE = ["verified", "self_reported"];
 
+/** De contactpersoon is de enige vraag die een eigen kolom krijgt. */
+const CONTACT_KEY = "contact_for_billing";
+
+/**
+ * De overige antwoorden, in de volgorde van de vragenlijst. Personeelsaantal
+ * en contactpersoon staan al in hun eigen kolom, dus die slaan we over.
+ * Wordt er een vraag toegevoegd in survey.ts, dan verschijnt hij hier vanzelf.
+ */
+function otherAnswers(answers: Record<string, unknown> | null) {
+  if (!answers) return [];
+  return QUESTIONS.filter((question) => question.key !== "headcount" && question.key !== CONTACT_KEY)
+    .map((question) => ({
+      key: question.key,
+      label: question.label,
+      value: answerLabel(question.key, answers[question.key]),
+    }))
+    .filter((entry) => entry.value !== "");
+}
+
 export default async function Dashboard() {
-  const campaign = await getCampaign();
-  const rows = await q<Row>(
-    `select * from partner_board order by last_attempt_at desc nulls last, name`,
-  );
+  let campaign: Campaign;
+  let rows: Row[];
+  try {
+    campaign = await getCampaign();
+    rows = await q<Row>(
+      `select * from partner_board order by last_attempt_at desc nulls last, name`,
+    );
+  } catch (err) {
+    // De echte fout (met stack) hoort in de serverlogs, niet op het scherm.
+    console.error("[dashboard] kon gegevens niet laden:", err);
+    return <DashboardError err={err} />;
+  }
 
   const total = rows.length;
   const verified = rows.filter((r) => DONE.includes(r.status)).length;
@@ -105,7 +137,10 @@ export default async function Dashboard() {
           </p>
           <table className="log">
             <thead>
-              <tr><th>Partner</th><th>Opgegeven</th><th>Bij ons</th><th>Reden</th></tr>
+              <tr>
+                <th>Partner</th><th>Opgegeven</th><th>Bij ons</th>
+                <th>Contactpersoon</th><th>Reden</th>
+              </tr>
             </thead>
             <tbody>
               {flagged.map((r) => (
@@ -113,6 +148,8 @@ export default async function Dashboard() {
                   <td>{r.name}</td>
                   <td className="num">{r.reported_headcount}</td>
                   <td className="num" style={{ color: "var(--mute)" }}>{r.known_headcount ?? "—"}</td>
+                  {/* Wie je moet hebben als je hierover wilt terugbellen. */}
+                  <td>{answerLabel(CONTACT_KEY, r.answers?.[CONTACT_KEY]) || "—"}</td>
                   <td style={{ color: "var(--mute)" }}>
                     {r.confidence === "low" ? "slecht verstaan" : "wijkt sterk af"}
                   </td>
@@ -124,31 +161,57 @@ export default async function Dashboard() {
       )}
 
       <section style={{ marginTop: 40 }}>
-        <h2>Alle partners</h2>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
+          <h2>Alle partners</h2>
+          <a href="/dashboard/export" style={{ fontSize: 14 }}>
+            Download Excel
+          </a>
+        </div>
         <table className="log">
           <thead>
             <tr>
               <th>Partner</th><th>Status</th><th>Pogingen</th>
-              <th>Aantal</th><th>Laatste poging</th>
+              <th>Aantal</th><th>Contactpersoon</th><th>Laatste poging</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} id={`p-${r.id}`}>
-                <td>{r.name}</td>
-                <td style={{ color: statusColor(r.status) }}>{statusLabel(r.status)}</td>
-                <td className="num">{r.attempts || "—"}</td>
-                <td className="num">{r.reported_headcount ?? "—"}</td>
-                <td className="num" style={{ color: "var(--mute)" }}>
-                  {r.last_attempt_at
-                    ? new Date(r.last_attempt_at).toLocaleString("nl-NL", {
-                        timeZone: "Europe/Amsterdam",
-                        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
-                      })
-                    : "—"}
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const extras = otherAnswers(r.answers);
+              return (
+                <Fragment key={r.id}>
+                  <tr id={`p-${r.id}`}>
+                    <td>{r.name}</td>
+                    <td style={{ color: statusColor(r.status) }}>{statusLabel(r.status)}</td>
+                    <td className="num">{r.attempts || "—"}</td>
+                    <td className="num">{r.reported_headcount ?? "—"}</td>
+                    <td>{answerLabel(CONTACT_KEY, r.answers?.[CONTACT_KEY]) || "—"}</td>
+                    <td className="num" style={{ color: "var(--mute)" }}>
+                      {r.last_attempt_at
+                        ? new Date(r.last_attempt_at).toLocaleString("nl-NL", {
+                            timeZone: "Europe/Amsterdam",
+                            day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+                          })
+                        : "—"}
+                    </td>
+                  </tr>
+
+                  {/* De rest van wat de partner vertelde. Een opmerking kan lang
+                      zijn en past niet in een kolom, dus die krijgt de volle
+                      breedte onder de regel. Alleen tonen als er iets staat. */}
+                  {extras.length > 0 && (
+                    <tr>
+                      <td colSpan={6} style={{ borderTop: 0, paddingTop: 0, color: "var(--mute)", fontSize: 13 }}>
+                        {extras.map((entry) => (
+                          <span key={entry.key} style={{ marginRight: 18 }}>
+                            {entry.label}: <span style={{ color: "var(--ink)" }}>{entry.value}</span>
+                          </span>
+                        ))}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -156,25 +219,87 @@ export default async function Dashboard() {
   );
 }
 
-function statusLabel(s: string) {
-  return {
-    pending: "nog niet aangekondigd",
-    announced: "mail verstuurd",
-    scheduled: "belafspraak",
-    calling: "in gesprek",
-    completed: "wacht op akkoord",
-    verified: "bevestigd",
-    self_reported: "zelf ingevuld",
-    no_answer: "niet opgenomen",
-    refused: "wil niet meedoen",
-    invalid: "nummer klopt niet",
-    excluded: "niet bellen",
-  }[s] ?? s;
-}
-
 function statusColor(s: string) {
   if (DONE.includes(s)) return "var(--signal)";
   if (s === "calling") return "var(--live)";
   if (["refused", "invalid", "excluded"].includes(s)) return "var(--halt)";
   return "inherit";
+}
+
+// ---------------------------------------------------------------------------
+// Nette foutpagina als de database niet bereikbaar is of het schema ontbreekt.
+// Geen stack trace op het scherm — die staat in de serverlogs.
+// ---------------------------------------------------------------------------
+function diagnose(err: unknown): { title: string; body: ReactNode } {
+  const e = err as { code?: string; message?: string } | null;
+  const code = e?.code ?? "";
+  const msg = e?.message ?? "";
+
+  // Verbinding: server niet bereikbaar, DNS, timeout, TLS.
+  const connErrors = [
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+    "ECONNRESET",
+    "3D000", // invalid_catalog_name: database bestaat niet
+    "28P01", // ongeldig wachtwoord
+  ];
+  if (connErrors.includes(code) || /getaddrinfo|connect|timeout|password|ssl|econn/i.test(msg)) {
+    return {
+      title: "Database niet bereikbaar",
+      body: (
+        <>
+          De verbinding met de database lukt niet. Controleer{" "}
+          <code style={{ fontFamily: "var(--mono)", fontSize: 14 }}>DATABASE_URL</code>,
+          of de EU-Postgres draait, en of het wachtwoord en de netwerkregels
+          kloppen. De precieze fout staat in de serverlogs.
+        </>
+      ),
+    };
+  }
+
+  // Tabellen of de campagne-rij ontbreken: schema nog niet gedraaid.
+  if (
+    code === "42P01" || // undefined_table: relation does not exist
+    /relation .* does not exist|ontbreekt|schema\.sql|partner_board/i.test(msg)
+  ) {
+    return {
+      title: "Databasetabellen ontbreken",
+      body: (
+        <>
+          Het schema is nog niet ingeladen. Draai het eenmalig:{" "}
+          <code style={{ fontFamily: "var(--mono)", fontSize: 14 }}>npm run db:push</code>{" "}
+          (dat is{" "}
+          <code style={{ fontFamily: "var(--mono)", fontSize: 14 }}>
+            psql $DATABASE_URL -f db/schema.sql
+          </code>
+          ). Daarna maakt hij ook de campagne-rij aan.
+        </>
+      ),
+    };
+  }
+
+  return {
+    title: "De gegevens konden niet geladen worden",
+    body: (
+      <>
+        Er ging iets mis bij het ophalen van de belronde. Kijk in de serverlogs
+        voor de precieze fout en probeer de pagina daarna opnieuw.
+      </>
+    ),
+  };
+}
+
+function DashboardError({ err }: { err: unknown }) {
+  const { title, body } = diagnose(err);
+  return (
+    <main className="wrap">
+      <p className="eyebrow">{process.env.ORG_NAME} · belronde personeelsaantallen</p>
+      <h1 style={{ margin: "8px 0 20px" }}>{title}</h1>
+      <div className="card">
+        <p style={{ margin: 0 }}>{body}</p>
+      </div>
+    </main>
+  );
 }
