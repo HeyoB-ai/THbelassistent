@@ -4,6 +4,22 @@ import { QUESTIONS, toolInputSchema, spokenText } from "../survey.js";
 /** Zonder ORG_NAME zou de verplichte opening "van undefined" zeggen. */
 const ORG = process.env.ORG_NAME || "TechnoHub";
 
+/**
+ * Het model waarmee het gesprek gevoerd wordt.
+ *
+ * Haiku is hier de juiste keuze: korte gestructureerde antwoorden in een strak
+ * enquêtegesprek, waarbij lage latency zwaarder weegt dan diepgang. Wil je
+ * Sonnet ernaast leggen, zet dan SURVEY_MODEL=claude-sonnet-5 in de omgeving —
+ * geen codewijziging nodig.
+ *
+ * Bewust `||` en niet `??`: een lege SURVEY_MODEL="" zou anders doorgegeven
+ * worden en een 404 opleveren.
+ */
+const MODEL = process.env.SURVEY_MODEL || "claude-haiku-4-5";
+
+// TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
+console.log(`[llm] model=${MODEL}${process.env.SURVEY_MODEL ? "" : " (standaard, SURVEY_MODEL niet gezet)"}`);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export type PartnerContext = {
@@ -57,7 +73,8 @@ const SUBMIT_TOOL = {
   input_schema: toolInputSchema(),
 };
 
-function systemPrompt(p: PartnerContext) {
+/** Geëxporteerd zodat de omvang te meten is zonder een gesprek te voeren. */
+export function systemPrompt(p: PartnerContext) {
   const script = QUESTIONS.map(
     (q, i) =>
       // "(optioneel)" sloeg eerder op de vraag zelf; het model liet vraag 2
@@ -120,6 +137,8 @@ export class SurveyAgent {
   private messages: Anthropic.MessageParam[] = [];
   public transcript: Turn[] = [];
   public submitted: SubmitPayload | null = null;
+  /** Alleen voor de tijdelijke latency-logging: het hoeveelste model-antwoord. */
+  private turn = 1;
 
   constructor(private partner: PartnerContext) {}
 
@@ -144,13 +163,29 @@ export class SurveyAgent {
   }
 
   private async run(): Promise<string> {
+    const system = systemPrompt(this.partner);
+
+    // TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
+    // Dit is de enige plek in een beurt waar we op iets externs wachten, dus
+    // deze meting zegt of de stilte na een antwoord van het model komt.
+    const started = Date.now();
+
     const res = await anthropic.messages.create({
-      model: process.env.SURVEY_MODEL ?? "claude-haiku-4-5",
+      model: MODEL,
       max_tokens: 400,
-      system: systemPrompt(this.partner),
+      system,
       tools: [SUBMIT_TOOL as Anthropic.Tool],
       messages: this.messages,
     });
+
+    const ms = Date.now() - started;
+    const u = res.usage;
+    console.log(
+      `[llm] ${MODEL} beurt ${this.turn} — ${ms}ms | in ${u.input_tokens} tok ` +
+        `(cache write ${u.cache_creation_input_tokens ?? 0}, read ${u.cache_read_input_tokens ?? 0}) ` +
+        `| uit ${u.output_tokens} tok | stop=${res.stop_reason} | systeemprompt ${system.length} tekens`,
+    );
+    this.turn++;
 
     this.messages.push({ role: "assistant", content: res.content });
 
