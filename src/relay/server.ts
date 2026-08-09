@@ -243,29 +243,79 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
   }
 }
 
+/** Vanaf deze lengte is een komma een acceptabele plek om af te breken. */
+const SOFT_MIN = 80;
+/** Zonder enig leesteken knippen we hier alsnog, anders loopt de stilte op. */
+const HARD_MAX = 200;
+/** Korter dan dit is een brokje, geen eenheid — daar knippen we niet op. */
+const MIN_UNIT = 40;
+
 /**
- * Stuurt tekst in stukjes naar ConversationRelay.
+ * Stuurt tekst naar ConversationRelay, gebufferd tot een natuurlijke eenheid.
  *
- * Twilio verwacht per beurt een reeks tekstframes met last:false en precies één
- * afsluitend frame met last:true. Daarom houdt dit ding steeds één stukje vast:
- * pas als het volgende binnenkomt weet je dat het vorige niet het laatste was.
+ * Het model levert de tekst in brokjes van een paar honderd milliseconde aan,
+ * soms zelfs losse woorddelen ("D" + "ank u"). Elk brokje meteen doorsturen gaf
+ * de TTS evenveel losse synthese-eenheden, met een hoorbare stilte tussen elke
+ * eenheid — midden in zinnen. Daarom verzamelen we hier tot een zin af is, of
+ * tot een komma als de zin lang uitblijft, en gaat pas dán een frame de deur
+ * uit. Het streamingvoordeel blijft: de eerste zin klinkt zodra hij af is, niet
+ * na het hele antwoord.
+ *
+ * Twilio verwacht per beurt een reeks frames met last:false en precies één
+ * afsluitend frame met last:true. Daarom houdt dit ding steeds één eenheid
+ * vast: pas als de volgende klaar is weet je dat de vorige niet de laatste was.
  * Komt er helemaal geen tekst (het model roept meteen de tool aan), dan gaat er
  * ook niets de deur uit.
  */
 function createSpeaker(ws: WebSocket) {
+  let buffer = "";
   let pending: string | null = null;
+
+  /**
+   * Snijdt de eerstvolgende complete eenheid uit de buffer, of null als er nog
+   * geen natuurlijke grens in zit.
+   */
+  const takeUnit = (): string | null => {
+    const cut = (n: number) => {
+      const unit = buffer.slice(0, n);
+      buffer = buffer.slice(n);
+      return unit;
+    };
+
+    // 1. Zinseinde — de eenheid waar we op mikken. Het leesteken moet gevolgd
+    //    worden door witruimte, anders knippen we door "14." of "bijv." heen.
+    const sentence = /[.!?]["')\]]?\s/.exec(buffer);
+    if (sentence) return cut(sentence.index + sentence[0].length);
+
+    // 2. Blijft de zin maar duren, dan is een komma een veilige tussengrens.
+    //    Zonder dit zou de beller op een lange zin te lang wachten op geluid.
+    if (buffer.length >= SOFT_MIN) {
+      let last: RegExpExecArray | null = null;
+      const commas = /[,;:]\s/g;
+      for (let m = commas.exec(buffer); m; m = commas.exec(buffer)) last = m;
+      if (last && last.index + last[0].length >= MIN_UNIT) {
+        return cut(last.index + last[0].length);
+      }
+    }
+
+    // 3. Noodrem: geen leesteken in zicht. Knip op een spatie.
+    if (buffer.length >= HARD_MAX) {
+      const space = buffer.lastIndexOf(" ", HARD_MAX);
+      if (space > 0) return cut(space + 1);
+    }
+
+    return null;
+  };
 
   // TODO: tijdelijk voor diagnose — verwijderen zodra de pauze tussen twee
   // zinnen verklaard is.
   //
-  // Wat je hier meet is het moment waarop een frame ONZE kant uit gaat. Staan
-  // de frames vlak achter elkaar en hoort de beller toch een gat, dan zet de
-  // TTS die pauze erin en ligt het niet aan ons. Zit het gat al tussen twee
-  // frames, dan komt het van het model of van deze streaming.
+  // Wat je hier meet is het moment waarop een frame ONZE kant uit gaat. Nu er
+  // per zin gebufferd wordt hoort een Δ ongeveer de spreekduur van de vorige
+  // zin te zijn, en horen de gaten midden in zinnen weg te zijn.
   //
   // Let op de meetverschuiving: door de lookahead gaat frame N pas de deur uit
-  // als stukje N+1 binnenkomt. De Δ tussen twee frames is dus de tijd die het
-  // model tussen twee stukjes tekst nam, niet de tijd die de TTS nodig had.
+  // als eenheid N+1 klaar is.
   const seq = ++answerSeq;
   const t0 = Date.now();
   let frames = 0;
@@ -288,20 +338,31 @@ function createSpeaker(ws: WebSocket) {
     }
     console.log(
       `[tts #${seq}] frame ${frames} +${now - t0}ms (${frames === 1 ? "tot eerste geluid" : `Δ${gap}ms`})` +
-        `${last ? " LAATSTE" : ""}${endsSentence(token) ? " [einde zin]" : ""} "${preview(token)}"`,
+        `${last ? " LAATSTE" : ""}${endsSentence(token) ? " [einde zin]" : ""} ` +
+        `${token.length} tekens "${preview(token)}"`,
     );
     prevAt = now;
 
     ws.send(JSON.stringify({ type: "text", token, last }));
   };
 
+  /** Schuift een complete eenheid door de lookahead heen. */
+  const emit = (unit: string) => {
+    if (!unit) return;
+    if (pending !== null) send(pending, false);
+    pending = unit;
+  };
+
   return {
     push(chunk: string) {
       if (!chunk) return;
-      if (pending !== null) send(pending, false);
-      pending = chunk;
+      buffer += chunk;
+      for (let unit = takeUnit(); unit !== null; unit = takeUnit()) emit(unit);
     },
     end() {
+      // Wat er na de laatste grens nog in de buffer staat is de slotzin.
+      if (buffer.trim()) emit(buffer);
+      buffer = "";
       if (pending !== null) {
         send(pending, true);
         pending = null;
@@ -319,10 +380,10 @@ function createSpeaker(ws: WebSocket) {
 /** Doorlopende nummering, zodat de frames van één antwoord bij elkaar horen. */
 let answerSeq = 0;
 
-/** Eerste woorden van een stukje, op één regel en zonder de log te vervuilen. */
+/** Eerste woorden van een eenheid, op één regel en zonder de log te vervuilen. */
 function preview(token: string): string {
-  const flat = token.replace(/\s+/g, " ");
-  return flat.length <= 32 ? flat : `${flat.slice(0, 32)}…`;
+  const flat = token.replace(/\s+/g, " ").trim();
+  return flat.length <= 48 ? flat : `${flat.slice(0, 48)}…`;
 }
 
 /** Eindigt dit stukje een zin? Verraadt of het gat op een zinsgrens valt. */
