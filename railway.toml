@@ -16,6 +16,24 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
+# Het startcommando staat hier bewust WEL, en dat is de fix voor een crashlus.
+#
+# In het dashboard van deze service stond een Start Command (vermoedelijk ooit
+# overgenomen uit het oude Procfile: `npm run worker:build && npm run
+# worker:start`). Een dashboard-startcommando overschrijft de CMD uit de
+# Dockerfile. Dus draaide de container bij elke start alsnog tsc — in de
+# runtime-stage, waar alleen package.json en dist/ staan en tsconfig.worker.json
+# dus ontbreekt: "TS5058: The specified path does not exist".
+#
+# Railway's eigen regel is dat configuratie in code altijd wint van het
+# dashboard. Door het commando hier vast te leggen is die dashboard-instelling
+# uitgeschakeld, zonder dat iemand hem hoeft te vinden.
+#
+# Zonder shell-constructies, zodat Railway dit in exec-vorm draait en node PID 1
+# blijft. Dat is precies waarom de CMD in de Dockerfile er zo uitziet: een shell
+# ertussen geeft SIGTERM niet door en dan wordt de container hard afgeschoten.
+startCommand = "node dist/worker.js"
+
 # Een worker hoort altijd te draaien: na een crash of een herstart van het
 # platform meteen weer op.
 restartPolicyType = "ALWAYS"
@@ -23,11 +41,6 @@ restartPolicyType = "ALWAYS"
 # App Sleeping expliciet uit. Dit is het veld achter Railway's 'idle detection';
 # staat het aan, dan wordt een service zonder inkomend verkeer stilgezet.
 sleepApplication = false
-
-# Bewust GEEN startCommand hier. Railway voert die via een shell uit, en dan is
-# sh weer PID 1 — precies het probleem dat de Dockerfile net heeft opgelost met
-# CMD ["node", "dist/worker.js"] in exec-vorm. Door dit veld leeg te laten
-# blijft die CMD ongewijzigd het startcommando.
 
 # Bewust GEEN healthcheckPath. Een mislukte healthcheck is op Railway zelf een
 # reden om de container te stoppen; de worker heeft er geen nodig. GET /health
