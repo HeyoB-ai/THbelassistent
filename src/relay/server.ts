@@ -15,6 +15,42 @@ import { releasePartner } from "../lib/partners.js";
  * De spraakherkenning en de stem regelt Twilio; wij zien alleen tekst.
  */
 
+// ---------------------------------------------------------------------------
+// TODO: tijdelijk voor diagnose — verwijderen zodra de vertraging tussen
+// opnemen en de eerste gesproken zin verklaard is.
+//
+// Alles wat wij kunnen zien begint bij de websocket-verbinding. Is de tijd van
+// verbinding tot de opening klein, dan zit de vertraging ervóór (Twilio belt,
+// haalt de TwiML op bij Netlify, opent pas daarna deze socket) of erna (de TTS
+// van Google die de zin moet inspreken) — beide buiten dit proces.
+// ---------------------------------------------------------------------------
+let callSeq = 0;
+
+type Timing = {
+  seq: number;
+  connected: number;
+  setup: number | null;
+  openingSentAt: number | null;
+  mark(label: string, extra?: string): void;
+};
+
+function newTiming(): Timing {
+  return {
+    seq: ++callSeq,
+    connected: Date.now(),
+    setup: null,
+    openingSentAt: null,
+    mark(label, extra) {
+      const now = Date.now();
+      const sinceSetup = this.setup === null ? "" : ` | +${now - this.setup}ms na setup`;
+      console.log(
+        `[timing #${this.seq}] +${now - this.connected}ms na verbinding${sinceSetup} — ${label}` +
+          (extra ? ` (${extra})` : ""),
+      );
+    },
+  };
+}
+
 type Session = {
   partner: PartnerContext;
   agent: SurveyAgent;
@@ -62,6 +98,8 @@ export async function startRelayServer(port: number) {
 
   wss.on("connection", (ws) => {
     let session: Session | null = null;
+    const t = newTiming();
+    t.mark("websocket-verbinding open — vanaf hier meten we");
 
     ws.on("message", async (raw) => {
       let msg: any;
@@ -71,10 +109,16 @@ export async function startRelayServer(port: number) {
         return;
       }
 
+      // Elk binnenkomend bericht met een tijdstempel: zo zie je of Twilio
+      // tussen verbinding en setup nog iets stuurt, en wanneer de gebelde
+      // voor het eerst iets zegt.
+      t.mark(`bericht "${msg.type}" ontvangen`);
+      if (msg.type === "setup") t.setup = Date.now();
+
       try {
         switch (msg.type) {
           case "setup":
-            session = await handleSetup(ws, msg);
+            session = await handleSetup(ws, msg, t);
             break;
 
           case "prompt":
@@ -110,15 +154,32 @@ export async function startRelayServer(port: number) {
   return wss;
 }
 
-async function handleSetup(ws: WebSocket, msg: any): Promise<Session | null> {
+async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session | null> {
+  t.mark("handleSetup binnen — er is nog niets geawait");
+
   // Eerst praten, dan pas opzoeken. Alles wat hiervóór gebeurt is stilte voor
   // iemand die net heeft opgenomen; de opening hangt niet van de partner af.
+  const sendStart = Date.now();
   speak(ws, OPENING);
+  t.openingSentAt = Date.now();
+  t.mark(
+    "opening de deur uit",
+    `${OPENING.length} tekens, ws.send duurde ${t.openingSentAt - sendStart}ms, ` +
+      `nog ${ws.bufferedAmount} bytes in de socketbuffer`,
+  );
 
   const partnerId = msg.customParameters?.partnerId;
+  const lookupStart = Date.now();
   const partner = await one<any>(
     `select id, name, contact_name, known_headcount from partners where id = $1`,
     [partnerId],
+  );
+  t.mark(
+    "partner-lookup klaar",
+    `${Date.now() - lookupStart}ms, ` +
+      (t.openingSentAt === null
+        ? "LET OP: dit gebeurde VOOR de opening"
+        : "na de opening, zoals bedoeld"),
   );
   if (!partner) {
     console.error(`[relay] onbekende partner in setup: ${partnerId}`);
@@ -126,10 +187,12 @@ async function handleSetup(ws: WebSocket, msg: any): Promise<Session | null> {
     return null;
   }
 
+  const attemptStart = Date.now();
   const attempt = await one<{ id: string }>(
     `select id from call_attempts where twilio_sid = $1`,
     [msg.callSid],
   );
+  t.mark("call_attempts-lookup klaar", `${Date.now() - attemptStart}ms`);
 
   const ctx: PartnerContext = {
     id: partner.id,
@@ -150,6 +213,7 @@ async function handleSetup(ws: WebSocket, msg: any): Promise<Session | null> {
   // De opening is hierboven al uitgesproken; dit zet 'm in de geschiedenis van
   // het model zodat het niet opnieuw begint te begroeten.
   session.agent.openScripted();
+  t.mark("setup afgerond, sessie staat klaar");
   return session;
 }
 
