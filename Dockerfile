@@ -35,4 +35,7 @@ COPY --from=build /app/dist ./dist
 # De websocket voor ConversationRelay. Zet RELAY_WS_URL hiernaartoe.
 EXPOSE 8081
 
-CMD ["npm", "run", "worker:start"]
+# Node draait als PID 1, niet als kind van npm. npm geeft SIGTERM slecht door,
+# waardoor de eigen shutdown-handler nooit aan bod kwam en het platform
+# uiteindelijk SIGKILL stuurde.
+CMD ["node", "dist/worker.js"]

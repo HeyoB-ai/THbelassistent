@@ -98,7 +98,13 @@ export async function startRelayServer(port: number) {
     });
 
     ws.on("close", async () => {
-      if (session && !session.closed) await finalize(session, "aborted");
+      // Een rejectie hier heeft geen aanroeper die hem opvangt: 'close' is een
+      // event-callback, dus zonder try/catch legt hij het hele proces om.
+      try {
+        if (session && !session.closed) await finalize(session, "aborted");
+      } catch (err) {
+        console.error("[relay] afronden na sluiten van de socket faalde:", err);
+      }
     });
   });
 
@@ -148,9 +154,17 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
   if (session.agent.submitted) {
     if (reply) speak(ws, reply);
     // Even wachten tot de afsluitende zin is uitgesproken voordat we ophangen.
+    // Ook hier geldt: geen aanroeper, dus alles moet binnen de callback worden
+    // afgevangen. In die vier seconden kan de beller allang opgehangen hebben.
     setTimeout(async () => {
-      await finalize(session, "submitted");
-      ws.send(JSON.stringify({ type: "end", handoffData: JSON.stringify({ done: true }) }));
+      try {
+        await finalize(session, "submitted");
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "end", handoffData: JSON.stringify({ done: true }) }));
+        }
+      } catch (err) {
+        console.error("[relay] afronden na ingevulde vragenlijst faalde:", err);
+      }
     }, 4000);
     return;
   }
