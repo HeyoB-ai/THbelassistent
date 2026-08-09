@@ -1,4 +1,8 @@
 import "dotenv/config";
+// TODO: tijdelijk voor diagnose — verwijderen zodra de herstart-oorzaak bekend is.
+// Moet vóór de andere imports staan: zo vangt hij ook fouten die ontstaan
+// terwijl db.js/twilio/relay geladen worden.
+import "./lib/lifecycleLogging.js";
 import twilio from "twilio";
 import { q, one, getCampaign, logEvent, pool } from "./lib/db.js";
 import { isCallableMoment } from "./lib/callWindow.js";
@@ -163,12 +167,24 @@ async function main() {
   void tick();
 
   const shutdown = async () => {
+    console.log("[worker] shutdown gestart");
     clearInterval(timer);
-    await pool.end();
+    try {
+      await pool.end();
+    } catch (err) {
+      // Zonder deze catch verwerpt shutdown() stilletjes, wordt process.exit
+      // nooit bereikt en blijft het proces hangen tot Railway SIGKILL stuurt.
+      console.error("[worker] pool.end() faalde:", err);
+    }
+    console.log("[worker] shutdown klaar, afsluiten met code 0");
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }
 
-void main();
+// Zonder deze catch zou een fout in main() een unhandled rejection worden.
+void main().catch((err) => {
+  console.error("[worker] main() faalde:", err);
+  process.exit(1);
+});

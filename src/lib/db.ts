@@ -5,6 +5,14 @@ export const pool = new Pool({
   max: 10,
 });
 
+// Zonder deze listener gooit pg een fout op een idle verbinding als uncaught
+// exception — het proces valt dan om zonder dat er een query mislukt is.
+// Managed Postgres verbreekt idle verbindingen routineus, dus dit hoort er
+// sowieso te staan. De log erbij is tijdelijk, de handler niet.
+pool.on("error", (err) => {
+  console.error("[db] fout op een idle verbinding in de pool:", err);
+});
+
 export async function q<T = any>(text: string, params: unknown[] = []): Promise<T[]> {
   const res = await pool.query(text, params);
   return res.rows as T[];

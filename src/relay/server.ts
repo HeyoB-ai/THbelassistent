@@ -40,7 +40,25 @@ export async function startRelayServer(port: number) {
   });
 
   const wss = new WebSocketServer({ server: http });
-  http.listen(port);
+
+  // TODO: tijdelijk voor diagnose — verwijderen zodra de herstart-oorzaak bekend is.
+  // Deze drie handlers testen de hypothese "de server sluit zichzelf".
+  // LET OP: door een 'error'-listener te registreren gooit de http-server een
+  // latere fout niet meer als uncaught exception; hij wordt nu gelogd.
+  http.on("close", () => console.log("[relay] http-server is gesloten"));
+  wss.on("close", () => console.log("[relay] websocket-server is gesloten"));
+  http.on("error", (err) => console.error("[relay] http-server fout:", err));
+
+  // listen() is asynchroon: pas bij 'listening' luistert de server echt. Voorheen
+  // logden we succes voordat het binden gelukt was, en kwam een bindfout (zoals
+  // EADDRINUSE) pas ná "[worker] gestart" naar buiten — als uncaught exception.
+  await new Promise<void>((resolve, reject) => {
+    http.once("error", reject);
+    http.listen(port, () => {
+      http.off("error", reject);
+      resolve();
+    });
+  });
   console.log(`[relay] luistert op :${port} (ws + GET /health)`);
 
   wss.on("connection", (ws) => {
