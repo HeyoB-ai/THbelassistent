@@ -11,32 +11,36 @@ import { NextRequest } from "next/server";
  * maar dat vraagt een eigen account én en-US — geen optie voor een Nederlands
  * gesprek. Wil je een mannenstem: nl-NL-Chirp3-HD-Charon.
  *
- * De transcriptie draait op Deepgram Flux. Dat model doet transcriptie en
- * turn-detection in één keer, in plaats van los van elkaar; volgens Twilio
- * scheelt dat 200-600ms reactietijd per beurt en ongeveer dertig procent
- * minder valse onderbrekingen. Nederlands zit in de tien talen die Flux
- * ondersteunt.
+ * De transcriptie draait op Deepgram nova-3.
+ *
+ * Deepgram Flux stond hier even: dat doet transcriptie en turn-detection in
+ * één model en scheelt volgens Twilio 200-600ms per beurt. Maar met flux kwam
+ * er geen websocket-verbinding meer tot stand — de TwiML werd wél opgehaald
+ * (te zien aan de AnsweredBy-regel hieronder), maar Twilio struikelde over het
+ * uitvoeren van <ConversationRelay>. Waarschijnlijk is flux niet beschikbaar
+ * voor dit account of voor nl-NL. Niet opnieuw proberen zonder eerst in de
+ * Twilio Console te bevestigen dat flux voor nl-NL beschikbaar is.
  */
 
 /**
- * Turn-detection: wanneer besluit Twilio dat de beller uitgesproken is.
+ * Turn-detection: hoe lang Twilio na spraak wacht voor hij de beurt afsluit.
  *
- * Twee knoppen, met verschillende rollen — draai er één tegelijk aan:
+ * 600-5000ms; Twilio's eigen standaard is `auto`. Korter = sneller antwoord,
+ * meer kans dat de assistent iemand in de rede valt.
  *
- *   eotThreshold  hoe zeker Flux moet zijn dat de beurt voorbij is (0,5-0,9).
- *                 Lager = sneller antwoord, maar meer kans dat de assistent
- *                 iemand in de rede valt. Twilio's standaard is 0,8.
- *   speechTimeout de harde bovengrens: zoveel stilte en de beurt wordt
- *                 afgesloten, ongeacht hoe zeker het model is (600-5000ms).
+ * Via de omgeving te zetten zodat tunen geen deploy vraagt. Een waarde buiten
+ * bereik laat Twilio de TwiML afkeuren — en dan loopt het gesprek stuk — dus
+ * hij wordt hier begrensd en teruggezet op de standaard. Met `off` gaat het
+ * attribuut er helemaal uit en valt Twilio terug op `auto`; dat is de knop om
+ * aan te draaien als het gesprek onverhoopt tóch niet doorkomt, zonder deploy.
  *
- * Beide zijn via de omgeving te zetten zodat tunen geen deploy vraagt. Een
- * waarde buiten bereik laat Twilio de TwiML afkeuren — daar loopt het gesprek
- * op stuk — dus alles wordt hier begrensd en teruggezet op de standaard.
+ * eotThreshold stond hier ook, maar dat geldt volgens Twilio's referentie
+ * alleen bij speechModel="flux" en is met nova-3 dus zinloos.
  */
-const EOT_THRESHOLD = clamp("STT_EOT_THRESHOLD", process.env.STT_EOT_THRESHOLD, 0.5, 0.9, 0.8);
-const SPEECH_TIMEOUT = Math.round(
-  clamp("STT_SPEECH_TIMEOUT_MS", process.env.STT_SPEECH_TIMEOUT_MS, 600, 5000, 800),
-);
+const SPEECH_TIMEOUT =
+  process.env.STT_SPEECH_TIMEOUT_MS?.trim().toLowerCase() === "off"
+    ? null
+    : Math.round(clamp("STT_SPEECH_TIMEOUT_MS", process.env.STT_SPEECH_TIMEOUT_MS, 600, 5000, 800));
 
 function clamp(name: string, raw: string | undefined, min: number, max: number, fallback: number) {
   if (!raw) return fallback;
@@ -47,6 +51,7 @@ function clamp(name: string, raw: string | undefined, min: number, max: number, 
   }
   return value;
 }
+
 export async function POST(req: NextRequest) {
   const partnerId = req.nextUrl.searchParams.get("partner");
   const form = await req.formData();
@@ -77,9 +82,8 @@ export async function POST(req: NextRequest) {
       ttsProvider="Google"
       voice="nl-NL-Chirp3-HD-Kore"
       transcriptionProvider="Deepgram"
-      speechModel="flux"
-      eotThreshold="${EOT_THRESHOLD}"
-      speechTimeout="${SPEECH_TIMEOUT}"
+      speechModel="nova-3"${SPEECH_TIMEOUT === null ? "" : `
+      speechTimeout="${SPEECH_TIMEOUT}"`}
       interruptible="true"
       dtmfDetection="true"
       welcomeGreetingInterruptible="false">
