@@ -10,7 +10,43 @@ import { NextRequest } from "next/server";
  * externe koppeling of voice-id ondersteunt. ElevenLabs stond hier eerder,
  * maar dat vraagt een eigen account én en-US — geen optie voor een Nederlands
  * gesprek. Wil je een mannenstem: nl-NL-Chirp3-HD-Charon.
+ *
+ * De transcriptie draait op Deepgram Flux. Dat model doet transcriptie en
+ * turn-detection in één keer, in plaats van los van elkaar; volgens Twilio
+ * scheelt dat 200-600ms reactietijd per beurt en ongeveer dertig procent
+ * minder valse onderbrekingen. Nederlands zit in de tien talen die Flux
+ * ondersteunt.
  */
+
+/**
+ * Turn-detection: wanneer besluit Twilio dat de beller uitgesproken is.
+ *
+ * Twee knoppen, met verschillende rollen — draai er één tegelijk aan:
+ *
+ *   eotThreshold  hoe zeker Flux moet zijn dat de beurt voorbij is (0,5-0,9).
+ *                 Lager = sneller antwoord, maar meer kans dat de assistent
+ *                 iemand in de rede valt. Twilio's standaard is 0,8.
+ *   speechTimeout de harde bovengrens: zoveel stilte en de beurt wordt
+ *                 afgesloten, ongeacht hoe zeker het model is (600-5000ms).
+ *
+ * Beide zijn via de omgeving te zetten zodat tunen geen deploy vraagt. Een
+ * waarde buiten bereik laat Twilio de TwiML afkeuren — daar loopt het gesprek
+ * op stuk — dus alles wordt hier begrensd en teruggezet op de standaard.
+ */
+const EOT_THRESHOLD = clamp("STT_EOT_THRESHOLD", process.env.STT_EOT_THRESHOLD, 0.5, 0.9, 0.8);
+const SPEECH_TIMEOUT = Math.round(
+  clamp("STT_SPEECH_TIMEOUT_MS", process.env.STT_SPEECH_TIMEOUT_MS, 600, 5000, 800),
+);
+
+function clamp(name: string, raw: string | undefined, min: number, max: number, fallback: number) {
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    console.warn(`[twiml] ${name}="${raw}" valt buiten ${min}-${max}; ${fallback} gebruikt`);
+    return fallback;
+  }
+  return value;
+}
 export async function POST(req: NextRequest) {
   const partnerId = req.nextUrl.searchParams.get("partner");
   const form = await req.formData();
@@ -41,7 +77,9 @@ export async function POST(req: NextRequest) {
       ttsProvider="Google"
       voice="nl-NL-Chirp3-HD-Kore"
       transcriptionProvider="Deepgram"
-      speechModel="nova-3"
+      speechModel="flux"
+      eotThreshold="${EOT_THRESHOLD}"
+      speechTimeout="${SPEECH_TIMEOUT}"
       interruptible="true"
       dtmfDetection="true"
       welcomeGreetingInterruptible="false">
