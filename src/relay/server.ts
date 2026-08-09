@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { q, one, getCampaign, logEvent } from "../lib/db.js";
 import { SurveyAgent, type PartnerContext } from "./agent.js";
 import { AnswerSchema } from "../survey.js";
-import { sendConfirmation } from "../lib/mail.js";
 import { releasePartner } from "../lib/partners.js";
 
 /**
@@ -251,23 +250,27 @@ async function finalize(session: Session, reason: string) {
       return;
     }
 
+    // Er gaat geen bevestigingsmail meer uit: de teruglezing van het aantal aan
+    // de telefoon is het bevestigingsmoment. Het token blijft bestaan zodat de
+    // partner zijn eigen pagina op /s/[token] kan blijven openen en corrigeren.
     const confirmToken = randomUUID();
     await q(
-      `insert into responses (partner_id, source, answers, confidence, attempt_id, confirm_token)
-       values ($1,'call',$2,$3,$4,$5)
+      `insert into responses (partner_id, source, answers, confidence, attempt_id, confirm_token, confirmed_at)
+       values ($1,'call',$2,$3,$4,$5, now())
        on conflict (partner_id) do update
          set source='call', answers=excluded.answers, confidence=excluded.confidence,
              attempt_id=excluded.attempt_id, confirm_token=excluded.confirm_token,
-             confirmed_at=null, updated_at=now()`,
+             confirmed_at=now(), updated_at=now()`,
       [session.partner.id, JSON.stringify(parsed.data), confidence, session.attemptId, confirmToken],
     );
 
-    await q(`update partners set status='completed', updated_at=now() where id=$1`, [
+    await q(`update partners set status='verified', updated_at=now() where id=$1`, [
       session.partner.id,
     ]);
 
-    // Niets gaat naar de facturatie voordat de partner dit bevestigt.
-    await sendConfirmation(session.partner.id, confirmToken);
+    // Het enige controlemoment vóór facturatie is nu 'Even nakijken' op het
+    // dashboard: lage confidence of een aantal dat sterk afwijkt van wat wij
+    // geregistreerd hadden.
     await logEvent("answers_recorded", { confidence }, session.partner.id);
     return;
   }

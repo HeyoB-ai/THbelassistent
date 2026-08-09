@@ -29,6 +29,7 @@ export default async function Page({ params, searchParams }: Props) {
     await optOut(token);
   }
 
+  const org = process.env.ORG_NAME || "TechnoHub";
   const done = partner.confirmed_at || partner.status === "self_reported";
   const opted = partner.do_not_call && !done;
 
@@ -61,6 +62,7 @@ export default async function Page({ params, searchParams }: Props) {
             token={token}
             questions={QUESTIONS}
             initial={partner.answers ?? {}}
+            org={org}
           />
         </div>
       ) : (
@@ -74,6 +76,7 @@ export default async function Page({ params, searchParams }: Props) {
             token={token}
             questions={QUESTIONS}
             initial={partner.answers ?? {}}
+            org={org}
           />
         </div>
       )}

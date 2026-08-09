@@ -31,42 +31,15 @@ export const QUESTIONS: Question[] = [
   {
     key: "headcount",
     spoken:
-      "Hoeveel medewerkers heeft {{partner}} op dit moment in dienst? " +
-      "Het gaat om het aantal personen, niet om fte.",
+      "Hoeveel medewerkers heeft {{partner}} op dit moment in vaste of " +
+      "tijdelijke dienst? Het gaat om het aantal personen, niet om fte.",
     label: "Aantal medewerkers in dienst",
-    hint: "Aantal personen op de loonlijst, niet omgerekend naar fte.",
+    // De afbakening zit bewust in de vraag zelf, zodat er geen losse
+    // vervolgvraag over oproepkrachten en stagiairs meer nodig is.
+    hint: "Personen in vaste of tijdelijke dienst, niet omgerekend naar fte. Oproepkrachten en stagiairs tellen niet mee.",
     input: "number",
     required: true,
-    confirm: true, // dit cijfer raakt de bijdrage — altijd terugkoppelen
-  },
-  {
-    key: "headcount_basis",
-    spoken:
-      "En is dat inclusief oproepkrachten en stagiairs, of alleen vast en tijdelijk personeel?",
-    label: "Wat zit er in dat aantal?",
-    input: "choice",
-    options: [
-      { value: "all", label: "Inclusief oproepkrachten en stagiairs" },
-      { value: "contracted", label: "Alleen vast en tijdelijk personeel" },
-      { value: "unsure", label: "Weet ik niet zeker" },
-    ],
-    required: true,
-    confirm: false,
-  },
-  {
-    key: "expected_change",
-    spoken:
-      "Verwacht u dat dit aantal het komende jaar groeit, gelijk blijft, of krimpt?",
-    label: "Verwachting komend jaar",
-    input: "choice",
-    options: [
-      { value: "grow", label: "Groeit" },
-      { value: "stable", label: "Blijft gelijk" },
-      { value: "shrink", label: "Krimpt" },
-      { value: "unsure", label: "Weet ik niet" },
-    ],
-    required: false,
-    confirm: false,
+    confirm: true, // dit cijfer raakt de bijdrage — altijd teruglezen
   },
   {
     key: "contact_for_billing",
@@ -78,25 +51,48 @@ export const QUESTIONS: Question[] = [
     confirm: false,
   },
   {
-    key: "remarks",
-    spoken: "Heeft u verder nog iets dat u ons wilt meegeven?",
-    label: "Opmerkingen",
-    input: "text",
-    required: false,
+    key: "ai_interest",
+    spoken:
+      "Als {{org}} zetten we in op het promoten van AI voor onze partners. " +
+      "Daarvoor hebben we de AI-cirkel opgezet, en bouwen we applicaties zoals " +
+      "deze. Bent u geïnteresseerd om meer te leren over de inzet van AI " +
+      "binnen uw onderneming?",
+    label: "Interesse in AI",
+    hint: "Bij interesse neemt een collega hierover contact op.",
+    input: "choice",
+    options: [
+      { value: "yes", label: "Ja" },
+      { value: "no", label: "Nee" },
+    ],
+    required: true,
     confirm: false,
   },
 ];
 
-/** Zod-schema, afgeleid van bovenstaande definitie. */
+/**
+ * Zod-schema, afgeleid van bovenstaande definitie.
+ *
+ * ai_interest staat hier optioneel terwijl de vraag wél altijd gesteld wordt:
+ * wie er niet op wil antwoorden, moet daarmee niet zijn hele — verder complete
+ * — antwoord ongeldig maken en opnieuw gebeld worden.
+ */
 export const AnswerSchema = z.object({
   headcount: z.number().int().min(0).max(100_000),
-  headcount_basis: z.enum(["all", "contracted", "unsure"]),
-  expected_change: z.enum(["grow", "stable", "shrink", "unsure"]).optional(),
   contact_for_billing: z.string().max(200).optional(),
-  remarks: z.string().max(2000).optional(),
+  ai_interest: z.enum(["yes", "no"]).optional(),
 });
 
 export type Answers = z.infer<typeof AnswerSchema>;
+
+/**
+ * De vraag zoals hij uitgesproken wordt, met de plaatshouders ingevuld.
+ * {{partner}} is het bedrijf dat gebeld wordt, {{org}} zijn wij.
+ */
+export function spokenText(q: Question, vars: { partner: string; org: string }): string {
+  return q.spoken
+    .replace(/\{\{partner\}\}/g, vars.partner)
+    .replace(/\{\{org\}\}/g, vars.org);
+}
 
 /** JSON-schema voor de Anthropic-tool, afgeleid van dezelfde vragen. */
 export function toolInputSchema() {

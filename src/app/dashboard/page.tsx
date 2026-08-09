@@ -24,17 +24,19 @@ type Row = {
 
 const DONE = ["verified", "self_reported"];
 
-/** De contactpersoon is de enige vraag die een eigen kolom krijgt. */
 const CONTACT_KEY = "contact_for_billing";
+const AI_KEY = "ai_interest";
+
+/** Vragen met een eigen kolom; de rest komt op de regel eronder te staan. */
+const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY];
 
 /**
- * De overige antwoorden, in de volgorde van de vragenlijst. Personeelsaantal
- * en contactpersoon staan al in hun eigen kolom, dus die slaan we over.
- * Wordt er een vraag toegevoegd in survey.ts, dan verschijnt hij hier vanzelf.
+ * De overige antwoorden, in de volgorde van de vragenlijst. Wordt er een vraag
+ * toegevoegd in survey.ts, dan verschijnt hij hier vanzelf.
  */
 function otherAnswers(answers: Record<string, unknown> | null) {
   if (!answers) return [];
-  return QUESTIONS.filter((question) => question.key !== "headcount" && question.key !== CONTACT_KEY)
+  return QUESTIONS.filter((question) => !OWN_COLUMN.includes(question.key))
     .map((question) => ({
       key: question.key,
       label: question.label,
@@ -62,6 +64,7 @@ export default async function Dashboard() {
   const awaiting = rows.filter((r) => r.status === "completed").length;
   const live = rows.filter((r) => r.status === "calling").length;
   const closed = rows.filter((r) => ["refused", "invalid", "excluded"].includes(r.status)).length;
+  const aiInterested = rows.filter((r) => r.answers?.[AI_KEY] === "yes").length;
 
   const blocked = whyNotCallable(new Date(), {
     start: campaign.window_start,
@@ -99,6 +102,7 @@ export default async function Dashboard() {
         <div><b>{awaiting}</b><span className="eyebrow">wacht op akkoord</span></div>
         <div><b style={{ color: "var(--live)" }}>{live}</b><span className="eyebrow">in gesprek</span></div>
         <div><b style={{ color: "var(--halt)" }}>{closed}</b><span className="eyebrow">niet bereikbaar</span></div>
+        <div><b>{aiInterested}</b><span className="eyebrow">interesse in AI</span></div>
       </div>
 
       {/* Signatuur: het lijnenbord. Eén streep per partner, zoals op een
@@ -171,7 +175,8 @@ export default async function Dashboard() {
           <thead>
             <tr>
               <th>Partner</th><th>Status</th><th>Pogingen</th>
-              <th>Aantal</th><th>Contactpersoon</th><th>Laatste poging</th>
+              <th>Aantal</th><th>Contactpersoon</th><th>AI-interesse</th>
+              <th>Laatste poging</th>
             </tr>
           </thead>
           <tbody>
@@ -185,6 +190,16 @@ export default async function Dashboard() {
                     <td className="num">{r.attempts || "—"}</td>
                     <td className="num">{r.reported_headcount ?? "—"}</td>
                     <td>{answerLabel(CONTACT_KEY, r.answers?.[CONTACT_KEY]) || "—"}</td>
+                    {/* Het bellijstje voor de collega die AI-opvolging doet:
+                        'ja' springt eruit, de contactpersoon staat ernaast. */}
+                    <td
+                      style={{
+                        color: r.answers?.[AI_KEY] === "yes" ? "var(--signal)" : "var(--mute)",
+                        fontWeight: r.answers?.[AI_KEY] === "yes" ? 600 : 400,
+                      }}
+                    >
+                      {answerLabel(AI_KEY, r.answers?.[AI_KEY]) || "—"}
+                    </td>
                     <td className="num" style={{ color: "var(--mute)" }}>
                       {r.last_attempt_at
                         ? new Date(r.last_attempt_at).toLocaleString("nl-NL", {
@@ -200,7 +215,7 @@ export default async function Dashboard() {
                       breedte onder de regel. Alleen tonen als er iets staat. */}
                   {extras.length > 0 && (
                     <tr>
-                      <td colSpan={6} style={{ borderTop: 0, paddingTop: 0, color: "var(--mute)", fontSize: 13 }}>
+                      <td colSpan={7} style={{ borderTop: 0, paddingTop: 0, color: "var(--mute)", fontSize: 13 }}>
                         {extras.map((entry) => (
                           <span key={entry.key} style={{ marginRight: 18 }}>
                             {entry.label}: <span style={{ color: "var(--ink)" }}>{entry.value}</span>

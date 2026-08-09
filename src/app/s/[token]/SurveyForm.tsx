@@ -1,17 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Question } from "@/survey";
+import { spokenText, type Question } from "@/survey";
 import { submitSelfReport } from "./actions";
 
 export function SurveyForm({
   token,
   questions,
   initial,
+  org,
 }: {
   token: string;
   questions: Question[];
   initial: Record<string, unknown>;
+  /** Onze eigen naam; dit is een client-component en kan process.env niet lezen. */
+  org: string;
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -65,23 +68,19 @@ export function SurveyForm({
                 {!q.required && <span style={{ color: "var(--mute)", fontWeight: 400 }}> · optioneel</span>}
               </label>
               {q.hint && <p className="hint">{q.hint}</p>}
-              {q.key === "remarks" ? (
-                <textarea id={q.key} name={q.key} defaultValue={(initial[q.key] as string) ?? ""} />
-              ) : (
-                <input
-                  id={q.key}
-                  name={q.key}
-                  type={q.input === "number" ? "number" : "text"}
-                  inputMode={q.input === "number" ? "numeric" : undefined}
-                  min={q.input === "number" ? 0 : undefined}
-                  defaultValue={(initial[q.key] as string) ?? ""}
-                />
-              )}
+              <input
+                id={q.key}
+                name={q.key}
+                type={q.input === "number" ? "number" : "text"}
+                inputMode={q.input === "number" ? "numeric" : undefined}
+                min={q.input === "number" ? 0 : undefined}
+                defaultValue={(initial[q.key] as string) ?? ""}
+              />
             </>
           )}
 
           {/* Dezelfde vraag, zoals de assistent hem uitspreekt. */}
-          <p className="spoken">{q.spoken.replace("{{partner}}", "uw organisatie")}</p>
+          <p className="spoken">{spokenText(q, { partner: "uw organisatie", org })}</p>
         </div>
       ))}
 

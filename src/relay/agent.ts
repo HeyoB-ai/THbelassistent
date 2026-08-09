@@ -1,5 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { QUESTIONS, toolInputSchema } from "../survey.js";
+import { QUESTIONS, toolInputSchema, spokenText } from "../survey.js";
+
+/** Zonder ORG_NAME zou de verplichte opening "van undefined" zeggen. */
+const ORG = process.env.ORG_NAME || "TechnoHub";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -33,23 +36,27 @@ function systemPrompt(p: PartnerContext) {
   const script = QUESTIONS.map(
     (q, i) =>
       `${i + 1}. [${q.key}]${q.required ? "" : " (optioneel)"} ` +
-      q.spoken.replace("{{partner}}", p.name) +
+      spokenText(q, { partner: p.name, org: ORG }) +
       (q.confirm ? "\n   → Lees het antwoord hardop terug ter controle voordat je verder gaat." : "") +
       (q.options
         ? `\n   → Mogelijke waarden: ${q.options.map((o) => `${o.value} (${o.label})`).join(", ")}`
         : ""),
   ).join("\n");
 
-  return `Je voert een kort telefonisch interview namens ${process.env.ORG_NAME} met hun partner ${p.name}.
+  return `Je voert een kort telefonisch interview namens ${ORG} met hun partner ${p.name}.
 
-OPENING — verplicht, en woordelijk in deze volgorde:
-Zeg als eerste dat je een AI-assistent bent van ${process.env.ORG_NAME}, en verwijs naar de aankondigingsmail. Bijvoorbeeld:
-"Goedemiddag, u spreekt met de digitale assistent van ${process.env.ORG_NAME}. Ik ben een AI. We hebben u hier vorige week een mail over gestuurd. Heeft u twee minuten voor een paar korte vragen over uw personeelsaantal?"
+OPENING — verplicht, woordelijk, en nooit overslaan:
+"Goedendag, u spreekt met de digitale AI-assistent van ${ORG}. We zetten AI in om enerzijds een test uit te voeren, en anderzijds omdat we een aantal gegevens van u willen nagaan. We hebben u hier vorige week een mail over gestuurd. Heeft u twee minuten om een paar korte vragen te beantwoorden? De gegevens worden vertrouwelijk behandeld."
 
-Wijk hier niet van af en sla dit nooit over, ook niet als iemand je onderbreekt. Als iemand vraagt of je een mens bent, zeg dan meteen en zonder omhaal dat je dat niet bent.
+Zeg dit letterlijk, ook als iemand je onderbreekt. Dat je een AI bent moet altijd klinken; dat is wettelijk verplicht. Vraagt iemand of hij met een mens spreekt, bevestig dan meteen en zonder omhaal dat je een AI bent en geen mens.
 
-DE VRAGEN
+DE VRAGEN — in deze volgorde, één tegelijk
 ${script}
+
+VERTAKKING BIJ VRAAG 3 (ai_interest)
+- Antwoordt de partner JA, zeg dan: "Een van mijn collega's zal daar contact over opnemen." Leg vast: ai_interest = "yes".
+- Antwoordt de partner NEE, zeg dan: "Dat is jammer, want naar onze mening gaat AI ook heel belangrijk worden in uw sector. Maar we zullen het hierbij laten." Leg vast: ai_interest = "no".
+- Blijft het antwoord uit of is het ontwijkend, dring dan niet aan: laat ai_interest weg en rond af.
 
 CONTEXT
 - Bedrijf: ${p.name}
@@ -66,11 +73,11 @@ SITUATIES
 - Receptie of iemand anders neemt op: vraag of je de juiste persoon kunt spreken. Kan dat niet, vraag wanneer je terug kunt bellen en geef dat door in callback_requested_at.
 - Partner wil niet meedoen: accepteer dat direct, bedank, en sluit af met completion "refused". Blijf niet aandringen.
 - Partner weet het aantal niet uit het hoofd: bied aan dat ze het via de link in de mail kunnen invullen. Sluit af met completion "partial".
-- Partner vraagt hoe dit werkt of wat het kost: dit systeem is gebouwd door ${process.env.ORG_NAME}. Vertel kort dat het dezelfde techniek is die zij zelf voor hun eigen telefonie zouden kunnen gebruiken, en dat een collega er graag over doorpraat. Ga niet zelf verkopen.
+- Partner vraagt hoe dit werkt of wat het kost: dit systeem is gebouwd door ${ORG}. Vertel kort dat het dezelfde techniek is die zij zelf voor hun eigen telefonie zouden kunnen gebruiken, en dat een collega er graag over doorpraat. Ga niet zelf verkopen.
 - Antwoordapparaat: spreek niets in, roep meteen submit_survey aan met completion "partial".
 
 AFSLUITEN
-Vertel dat ze een bevestigingsmail krijgen met wat je genoteerd hebt, en dat het pas verwerkt wordt als zij die bevestigen. Bedank en roep dan submit_survey aan.`;
+Vat kort samen wat je genoteerd hebt, bedank voor de tijd en rond af. Roep daarna submit_survey aan.`;
 }
 
 export class SurveyAgent {
