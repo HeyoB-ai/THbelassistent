@@ -51,9 +51,13 @@ function newTiming(): Timing {
   };
 }
 
+type Speaker = ReturnType<typeof createSpeaker>;
+
 type Session = {
   partner: PartnerContext;
   agent: SurveyAgent;
+  /** De spreker van de lopende beurt, zodat een interrupt 'm kan stoppen. */
+  speaking: Speaker | null;
   attemptId: string | null;
   callSid: string;
   startedAt: number;
@@ -126,9 +130,11 @@ export async function startRelayServer(port: number) {
             break;
 
           case "interrupt":
-            // De beller praat er doorheen. Twilio kapt de TTS af, maar het
-            // model schrijft door: nu we streamen zouden we frames blijven
-            // sturen voor tekst die niemand meer hoort. Dus ook afkappen.
+            // De beller praat er doorheen. Twilio kapt de lopende TTS af,
+            // maar bij ons staat de rest van de beurt nog gebufferd en schrijft
+            // het model door. Allebei stoppen, anders spreekt de assistent
+            // straks alsnog over de beller heen.
+            session?.speaking?.cancel();
             session?.agent.interrupt();
             break;
 
@@ -206,6 +212,7 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
   const session: Session = {
     partner: ctx,
     agent: new SurveyAgent(ctx),
+    speaking: null,
     attemptId: attempt?.id ?? null,
     callSid: msg.callSid,
     startedAt: Date.now(),
@@ -223,7 +230,12 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
   // De tekst gaat stuk voor stuk de deur uit terwijl het model nog schrijft,
   // zodat de TTS begint bij de eerste woorden in plaats van na het hele antwoord.
   const speaker = createSpeaker(ws);
-  await session.agent.respondTo(utterance, (chunk) => speaker.push(chunk));
+  session.speaking = speaker;
+  try {
+    await session.agent.respondTo(utterance, (chunk) => speaker.push(chunk));
+  } finally {
+    session.speaking = null;
+  }
   speaker.end();
 
   if (session.agent.submitted) {
@@ -243,79 +255,67 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
   }
 }
 
-/** Vanaf deze lengte is een komma een acceptabele plek om af te breken. */
-const SOFT_MIN = 80;
-/** Zonder enig leesteken knippen we hier alsnog, anders loopt de stilte op. */
-const HARD_MAX = 200;
-/** Korter dan dit is een brokje, geen eenheid — daar knippen we niet op. */
-const MIN_UNIT = 40;
+/**
+ * Pas voorbij deze lengte knippen we een antwoord op. In de praktijk blijft een
+ * antwoord daar ruim onder — max_tokens staat op 400 en de prompt vraagt om
+ * korte beurten — dus gaat er normaal één frame per beurt uit. De grens is een
+ * noodrem voor een uitzonderlijk lange monoloog, niet de normale werkwijze.
+ */
+const TURN_MAX = 600;
 
 /**
- * Stuurt tekst naar ConversationRelay, gebufferd tot een natuurlijke eenheid.
+ * Stuurt de tekst van één beurt naar ConversationRelay, als één brok.
  *
- * Het model levert de tekst in brokjes van een paar honderd milliseconde aan,
- * soms zelfs losse woorddelen ("D" + "ank u"). Elk brokje meteen doorsturen gaf
- * de TTS evenveel losse synthese-eenheden, met een hoorbare stilte tussen elke
- * eenheid — midden in zinnen. Daarom verzamelen we hier tot een zin af is, of
- * tot een komma als de zin lang uitblijft, en gaat pas dán een frame de deur
- * uit. Het streamingvoordeel blijft: de eerste zin klinkt zodra hij af is, niet
- * na het hele antwoord.
+ * Hiervoor ging er per zin een frame uit. Dat klonk binnen een zin vloeiend,
+ * maar zette een hoorbare stilte tussen twee zinnen: na "Dus tien medewerkers
+ * in totaal." leek de assistent klaar, de beller antwoordde, en daar kwam
+ * "Klopt dat?" overheen. Elke framegrens is voor de TTS een afronding, en dus
+ * een uitnodiging aan de beller om te beginnen.
+ *
+ * Daarom verzamelen we nu de hele beurt en sturen we die in één keer weg. Dat
+ * kost tijd tot het eerste geluid — het model moet uitgeschreven zijn — maar een
+ * gesprek waarin niemand door elkaar praat weegt zwaarder dan een vroege start.
  *
  * Twilio verwacht per beurt een reeks frames met last:false en precies één
  * afsluitend frame met last:true. Daarom houdt dit ding steeds één eenheid
  * vast: pas als de volgende klaar is weet je dat de vorige niet de laatste was.
- * Komt er helemaal geen tekst (het model roept meteen de tool aan), dan gaat er
- * ook niets de deur uit.
+ * Bij één eenheid per beurt gaat die dus meteen als laatste weg. Komt er geen
+ * tekst (het model roept meteen de tool aan), dan gaat er ook niets de deur uit.
  */
 function createSpeaker(ws: WebSocket) {
   let buffer = "";
   let pending: string | null = null;
+  let cancelled = false;
 
   /**
-   * Snijdt de eerstvolgende complete eenheid uit de buffer, of null als er nog
-   * geen natuurlijke grens in zit.
+   * Normaal null: alles blijft staan tot het einde van de beurt. Alleen als een
+   * antwoord voorbij TURN_MAX groeit knippen we, en dan op de laatste
+   * natuurlijke grens ervóór — liefst een zinseinde, anders een komma, anders
+   * een spatie. Zo valt de enige pauze die overblijft nog op een logische plek.
    */
   const takeUnit = (): string | null => {
-    const cut = (n: number) => {
-      const unit = buffer.slice(0, n);
-      buffer = buffer.slice(n);
-      return unit;
-    };
+    if (buffer.length < TURN_MAX) return null;
 
-    // 1. Zinseinde — de eenheid waar we op mikken. Het leesteken moet gevolgd
-    //    worden door witruimte, anders knippen we door "14." of "bijv." heen.
-    const sentence = /[.!?]["')\]]?\s/.exec(buffer);
-    if (sentence) return cut(sentence.index + sentence[0].length);
+    const window = buffer.slice(0, TURN_MAX);
+    const space = window.lastIndexOf(" ");
+    const at =
+      lastEnd(/[.!?]["')\]]?\s/g, window) ??
+      lastEnd(/[,;:]\s/g, window) ??
+      (space > 0 ? space + 1 : null);
+    if (at === null) return null; // geen bruikbare grens; nog even wachten
 
-    // 2. Blijft de zin maar duren, dan is een komma een veilige tussengrens.
-    //    Zonder dit zou de beller op een lange zin te lang wachten op geluid.
-    if (buffer.length >= SOFT_MIN) {
-      let last: RegExpExecArray | null = null;
-      const commas = /[,;:]\s/g;
-      for (let m = commas.exec(buffer); m; m = commas.exec(buffer)) last = m;
-      if (last && last.index + last[0].length >= MIN_UNIT) {
-        return cut(last.index + last[0].length);
-      }
-    }
-
-    // 3. Noodrem: geen leesteken in zicht. Knip op een spatie.
-    if (buffer.length >= HARD_MAX) {
-      const space = buffer.lastIndexOf(" ", HARD_MAX);
-      if (space > 0) return cut(space + 1);
-    }
-
-    return null;
+    const unit = buffer.slice(0, at);
+    buffer = buffer.slice(at);
+    return unit;
   };
 
-  // TODO: tijdelijk voor diagnose — verwijderen zodra de pauze tussen twee
-  // zinnen verklaard is.
+  // TODO: tijdelijk voor diagnose — verwijderen zodra de valse pauzes bevestigd
+  // weg zijn.
   //
-  // Wat je hier meet is het moment waarop een frame ONZE kant uit gaat. Nu er
-  // per zin gebufferd wordt hoort een Δ ongeveer de spreekduur van de vorige
-  // zin te zijn, en horen de gaten midden in zinnen weg te zijn.
-  //
-  // Let op de meetverschuiving: door de lookahead gaat frame N pas de deur uit
-  // als eenheid N+1 klaar is.
+  // Waar je nu op let: het aantal frames per antwoord. Eén frame betekent geen
+  // enkele framegrens en dus geen vals "ik ben klaar"-moment. Zie je er meer
+  // dan één, dan was het antwoord langer dan TURN_MAX en is daar een pauze —
+  // dan is die grens te laag voor dit soort gesprekken.
   const seq = ++answerSeq;
   const t0 = Date.now();
   let frames = 0;
@@ -355,12 +355,25 @@ function createSpeaker(ws: WebSocket) {
 
   return {
     push(chunk: string) {
-      if (!chunk) return;
+      if (cancelled || !chunk) return;
       buffer += chunk;
       for (let unit = takeUnit(); unit !== null; unit = takeUnit()) emit(unit);
     },
+    /**
+     * De beller praat er doorheen. Nu we per beurt bufferen staat de rest van
+     * het antwoord nog ongestuurd klaar; zonder dit zou end() dat alsnog in één
+     * keer uitspreken, over de beller heen. Weggooien dus.
+     */
+    cancel() {
+      cancelled = true;
+      const dropped = (pending ?? "").length + buffer.length;
+      buffer = "";
+      pending = null;
+      if (dropped) console.log(`[tts #${seq}] onderbroken — ${dropped} tekens niet uitgesproken`);
+    },
     end() {
-      // Wat er na de laatste grens nog in de buffer staat is de slotzin.
+      if (cancelled) return;
+      // Wat er na de laatste grens nog in de buffer staat is de rest van de beurt.
       if (buffer.trim()) emit(buffer);
       buffer = "";
       if (pending !== null) {
@@ -379,6 +392,13 @@ function createSpeaker(ws: WebSocket) {
 
 /** Doorlopende nummering, zodat de frames van één antwoord bij elkaar horen. */
 let answerSeq = 0;
+
+/** Einde-index van de laatste treffer in `text`, of null als er geen is. */
+function lastEnd(re: RegExp, text: string): number | null {
+  let end: number | null = null;
+  for (let m = re.exec(text); m; m = re.exec(text)) end = m.index + m[0].length;
+  return end;
+}
 
 /** Eerste woorden van een eenheid, op één regel en zonder de log te vervuilen. */
 function preview(token: string): string {
