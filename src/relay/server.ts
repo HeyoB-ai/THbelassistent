@@ -255,9 +255,43 @@ async function handlePrompt(ws: WebSocket, session: Session, utterance: string) 
 function createSpeaker(ws: WebSocket) {
   let pending: string | null = null;
 
+  // TODO: tijdelijk voor diagnose — verwijderen zodra de pauze tussen twee
+  // zinnen verklaard is.
+  //
+  // Wat je hier meet is het moment waarop een frame ONZE kant uit gaat. Staan
+  // de frames vlak achter elkaar en hoort de beller toch een gat, dan zet de
+  // TTS die pauze erin en ligt het niet aan ons. Zit het gat al tussen twee
+  // frames, dan komt het van het model of van deze streaming.
+  //
+  // Let op de meetverschuiving: door de lookahead gaat frame N pas de deur uit
+  // als stukje N+1 binnenkomt. De Δ tussen twee frames is dus de tijd die het
+  // model tussen twee stukjes tekst nam, niet de tijd die de TTS nodig had.
+  const seq = ++answerSeq;
+  const t0 = Date.now();
+  let frames = 0;
+  let prevAt = t0;
+  let maxGap = 0;
+  let maxGapAt = 0;
+  let maxGapAfter = "";
+
   const send = (token: string, last: boolean) => {
     // Na vier seconden praten kan de beller allang opgehangen hebben.
     if (ws.readyState !== WebSocket.OPEN) return;
+
+    const now = Date.now();
+    const gap = now - prevAt;
+    frames++;
+    if (gap > maxGap) {
+      maxGap = gap;
+      maxGapAt = frames;
+      maxGapAfter = preview(token);
+    }
+    console.log(
+      `[tts #${seq}] frame ${frames} +${now - t0}ms (${frames === 1 ? "tot eerste geluid" : `Δ${gap}ms`})` +
+        `${last ? " LAATSTE" : ""}${endsSentence(token) ? " [einde zin]" : ""} "${preview(token)}"`,
+    );
+    prevAt = now;
+
     ws.send(JSON.stringify({ type: "text", token, last }));
   };
 
@@ -268,11 +302,32 @@ function createSpeaker(ws: WebSocket) {
       pending = chunk;
     },
     end() {
-      if (pending === null) return;
-      send(pending, true);
-      pending = null;
+      if (pending !== null) {
+        send(pending, true);
+        pending = null;
+      }
+      console.log(
+        frames === 0
+          ? `[tts #${seq}] geen tekst verstuurd (alleen tool-call)`
+          : `[tts #${seq}] klaar — ${frames} frames in ${Date.now() - t0}ms, ` +
+              `grootste gat ${maxGap}ms vóór frame ${maxGapAt} ("${maxGapAfter}")`,
+      );
     },
   };
+}
+
+/** Doorlopende nummering, zodat de frames van één antwoord bij elkaar horen. */
+let answerSeq = 0;
+
+/** Eerste woorden van een stukje, op één regel en zonder de log te vervuilen. */
+function preview(token: string): string {
+  const flat = token.replace(/\s+/g, " ");
+  return flat.length <= 32 ? flat : `${flat.slice(0, 32)}…`;
+}
+
+/** Eindigt dit stukje een zin? Verraadt of het gat op een zinsgrens valt. */
+function endsSentence(token: string): boolean {
+  return /[.!?]["')\]]?\s*$/.test(token);
 }
 
 /** Eén afgeronde zin ineens — voor de vaste opening, die niet gestreamd wordt. */
