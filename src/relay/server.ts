@@ -51,6 +51,30 @@ function newTiming(): Timing {
   };
 }
 
+/**
+ * Hoe lang na het uitspreken van de opening we niets van de beller aannemen.
+ *
+ * Met AMD uit begint de assistent te praten op het moment dat er wordt
+ * opgenomen — precies wanneer de gebelde zelf "met Bakkerij Jansen?" zegt.
+ * Twilio ziet dat als spraak, stuurt een interrupt en daarna een prompt, en het
+ * gesprek sprong door naar vraag 1 terwijl de beller alleen het staartje van de
+ * opening had gehoord. De verplichte AI-melding zit in de eerste zin, dus die
+ * mag daar niet aan opgeofferd worden.
+ *
+ * Zes seconden dekt die eerste zin ruim. Langer maken kost barge-in: wie na drie
+ * seconden zegt dat het niet uitkomt, wordt zolang genegeerd. Instelbaar via
+ * OPENING_GUARD_MS, 0 zet 'm helemaal uit.
+ */
+const OPENING_GUARD_MS = (() => {
+  const raw = process.env.OPENING_GUARD_MS;
+  const value = raw === undefined ? 6000 : Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 30_000) {
+    console.warn(`[relay] OPENING_GUARD_MS="${raw}" ongeldig; 6000 gebruikt`);
+    return 6000;
+  }
+  return value;
+})();
+
 type Speaker = ReturnType<typeof createSpeaker>;
 
 type Session = {
@@ -58,6 +82,8 @@ type Session = {
   agent: SurveyAgent;
   /** De spreker van de lopende beurt, zodat een interrupt 'm kan stoppen. */
   speaking: Speaker | null;
+  /** Tot dit moment negeren we interrupts en prompts: de opening speelt nog. */
+  openingGuardUntil: number;
   attemptId: string | null;
   callSid: string;
   startedAt: number;
@@ -119,6 +145,21 @@ export async function startRelayServer(port: number) {
       t.mark(`bericht "${msg.type}" ontvangen`);
       if (msg.type === "setup") t.setup = Date.now();
 
+      // Zolang de opening speelt nemen we niets van de beller aan. Wat hij nu
+      // zegt is zijn eigen begroeting, geen antwoord op een vraag die hij nog
+      // niet gehoord heeft.
+      if (
+        session &&
+        (msg.type === "interrupt" || msg.type === "prompt") &&
+        Date.now() < session.openingGuardUntil
+      ) {
+        const over = session.openingGuardUntil - Date.now();
+        console.log(
+          `[relay] "${msg.type}" genegeerd — de opening speelt nog (${over}ms te gaan)`,
+        );
+        return;
+      }
+
       try {
         switch (msg.type) {
           case "setup":
@@ -169,7 +210,8 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
   // iemand die net heeft opgenomen; de opening hangt niet van de partner af.
   const sendStart = Date.now();
   speak(ws, OPENING);
-  t.openingSentAt = Date.now();
+  const openingSentAt = Date.now();
+  t.openingSentAt = openingSentAt;
   t.mark(
     "opening de deur uit",
     `${OPENING.length} tekens, ws.send duurde ${t.openingSentAt - sendStart}ms, ` +
@@ -213,6 +255,7 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
     partner: ctx,
     agent: new SurveyAgent(ctx),
     speaking: null,
+    openingGuardUntil: openingSentAt + OPENING_GUARD_MS,
     attemptId: attempt?.id ?? null,
     callSid: msg.callSid,
     startedAt: Date.now(),
@@ -227,6 +270,13 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
 }
 
 async function handlePrompt(ws: WebSocket, session: Session, utterance: string) {
+  // De vragenlijst is al ingediend en we hangen zo op. Nog een model-aanroep
+  // doen levert niets op en zou over de afsluiting heen praten.
+  if (session.agent.submitted) {
+    console.log("[relay] prompt genegeerd — de vragenlijst is al ingediend");
+    return;
+  }
+
   // De tekst gaat stuk voor stuk de deur uit terwijl het model nog schrijft,
   // zodat de TTS begint bij de eerste woorden in plaats van na het hele antwoord.
   const speaker = createSpeaker(ws);

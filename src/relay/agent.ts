@@ -278,7 +278,18 @@ export class SurveyAgent {
 
     if (toolUse) {
       this.submitted = toolUse.input as SubmitPayload;
-      // Geen tool_result terug: het gesprek is hier klaar.
+
+      // Meteen een tool_result erachteraan. Normaal hangen we vlak hierna op en
+      // komt er geen model-aanroep meer, maar er zit vier seconden tussen — en
+      // zegt de beller in die tijd nog iets, dan ging de geschiedenis met een
+      // tool_use zonder tool_result naar de API: 400 "`tool_use` ids were found
+      // without `tool_result` blocks immediately after". Dat brak het gesprek.
+      this.messages.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: toolUse.id, content: "Genoteerd." },
+        ],
+      });
     }
 
     if (text) {

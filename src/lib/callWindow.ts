@@ -100,7 +100,10 @@ export function nextAttemptAt(attempts: number, w: Window, now = new Date()): Da
     { days: 3, at: "10:00" }, // poging 3: paar dagen later, ochtend
     { days: 7, at: "15:30" }, // poging 4: week later, eind middag
   ];
-  const plan = offsets[Math.min(attempts - 1, offsets.length - 1)];
+  // attempts telt het aantal gedane pogingen, dus poging 1 hoort bij offsets[0].
+  // Bij 0 gaf `attempts - 1` een index van -1 en dus undefined, waarna het
+  // afronden van een gesprek klapte op `plan.days`. Ondergrens erin.
+  const plan = offsets[Math.max(0, Math.min(attempts - 1, offsets.length - 1))];
 
   const target = new Date(now);
   target.setDate(target.getDate() + plan.days);
