@@ -20,7 +20,35 @@ const MODEL = process.env.SURVEY_MODEL || "claude-haiku-4-5";
 // TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
 console.log(`[llm] model=${MODEL}${process.env.SURVEY_MODEL ? "" : " (standaard, SURVEY_MODEL niet gezet)"}`);
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// TODO: tijdelijk voor diagnose — verwijderen zodra de trage ttft verklaard is.
+//
+// Elke HTTP-poging apart loggen. De SDK doet standaard twee herpogingen bij
+// 429 en 5xx, met wachttijd ertussen; die zitten allemaal in de ttft die we
+// meten. Zie je hier drie [api]-regels voor één beurt, dan is dát de acht
+// seconden — en niet de promptverwerking.
+let apiSeq = 0;
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  fetch: (async (url: any, init: any) => {
+    const n = ++apiSeq;
+    const started = Date.now();
+    try {
+      const res: any = await fetch(url, init);
+      const head = (k: string) => res.headers.get(k) ?? "-";
+      console.log(
+        `[api #${n}] ${res.status} in ${Date.now() - started}ms | ` +
+          `request-id=${head("request-id")} | retry-after=${head("retry-after")} | ` +
+          `verzoeken over=${head("anthropic-ratelimit-requests-remaining")} | ` +
+          `invoertokens over=${head("anthropic-ratelimit-input-tokens-remaining")}`,
+      );
+      return res;
+    } catch (err) {
+      console.error(`[api #${n}] netwerkfout na ${Date.now() - started}ms:`, err);
+      throw err;
+    }
+  }) as any,
+});
 
 export type PartnerContext = {
   id: string;
@@ -185,6 +213,8 @@ export class SurveyAgent {
   private turn = 1;
   /** De lopende model-stream, zodat interrupt() 'm kan afkappen. */
   private active: { abort: () => void } | null = null;
+  /** TODO: tijdelijk voor diagnose — hoeveel beurten er tegelijk lopen. */
+  private inFlight = 0;
 
   constructor(private partner: PartnerContext) {}
 
@@ -227,6 +257,18 @@ export class SurveyAgent {
   }
 
   private async run(onChunk?: (chunk: string) => void): Promise<string> {
+    // TODO: tijdelijk voor diagnose. De transcriptie levert een antwoord soms in
+    // losse stukjes; elk stukje is een eigen prompt-bericht en dus een eigen
+    // beurt. Die lopen door elkaar heen, want de websocket-handler wacht niet op
+    // de vorige. Drie tegelijk betekent drie verzoeken aan de API in dezelfde
+    // seconde — een prima manier om tegen een rate limit aan te lopen.
+    if (this.inFlight > 0) {
+      console.warn(
+        `[llm] LET OP: beurt ${this.turn} start terwijl er al ${this.inFlight} aanroep(en) lopen`,
+      );
+    }
+    this.inFlight++;
+
     const system = systemPrompt(this.partner);
     const started = Date.now();
     let firstTokenAt: number | null = null;
@@ -255,6 +297,7 @@ export class SurveyAgent {
       res = await stream.finalMessage();
     } catch (err) {
       this.active = null;
+      this.inFlight--;
       // Afgekapt door interrupt(): geen submitted, wél vastleggen wat er al
       // gezegd is, zodat het model in de volgende beurt weet waar het bleef.
       if (isAbort(err)) {
@@ -274,6 +317,7 @@ export class SurveyAgent {
       throw err;
     }
     this.active = null;
+    this.inFlight--;
 
     // TODO: tijdelijk voor diagnose — verwijderen zodra de latency verklaard is.
     // ttft is wat de beller merkt: hoe lang het duurt voor er geluid komt.
