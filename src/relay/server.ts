@@ -78,6 +78,31 @@ const OPENING_GUARD_MS = (() => {
   return value;
 })();
 
+/**
+ * Hoe lang we na een transcriptiefragment nog wachten op een vervolg.
+ *
+ * Deepgram sluit een beurt af na 600ms stilte, en levert een antwoord daardoor
+ * soms in stukjes: "Ik heb Heyo." / "Ja, dat klopt." / "Ja." Elk stukje was een
+ * eigen beurt en dus een eigen modelaanroep — drie tegelijk, want de
+ * websocket-handler wacht niet op de vorige. Dat gaf 429's met herpogingen (de
+ * ttft liep op tot bijna negen seconden) en een geschiedenis waarin dezelfde
+ * beurt drie keer beantwoord werd.
+ *
+ * Dit venster plakt die stukjes aan elkaar tot één beurt. De prijs is dat elk
+ * antwoord dit erbij krijgt, dus kort houden; instelbaar via PROMPT_MERGE_MS.
+ */
+const PROMPT_MERGE_MS = (() => {
+  const raw = process.env.PROMPT_MERGE_MS;
+  const value = raw === undefined ? 350 : Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 5000) {
+    console.warn(`[relay] PROMPT_MERGE_MS="${raw}" ongeldig; 350 gebruikt`);
+    return 350;
+  }
+  return value;
+})();
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 type Speaker = ReturnType<typeof createSpeaker>;
 
 type Session = {
@@ -87,6 +112,10 @@ type Session = {
   speaking: Speaker | null;
   /** Tot dit moment negeren we interrupts en prompts: de opening speelt nog. */
   openingGuardUntil: number;
+  /** Fragmenten die nog niet aan het model zijn voorgelegd. */
+  pending: string[];
+  /** Er loopt een beurt; nieuwe fragmenten wachten en gaan straks samen mee. */
+  turnRunning: boolean;
   attemptId: string | null;
   callSid: string;
   startedAt: number;
@@ -170,7 +199,7 @@ export async function startRelayServer(port: number) {
             break;
 
           case "prompt":
-            if (session && msg.last) await handlePrompt(ws, session, msg.voicePrompt);
+            if (session && msg.last) await enqueuePrompt(ws, session, msg.voicePrompt);
             break;
 
           case "interrupt":
@@ -256,6 +285,8 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
     agent: new SurveyAgent(ctx),
     speaking: null,
     openingGuardUntil: openingSentAt + OPENING_GUARD_MS,
+    pending: [],
+    turnRunning: false,
     attemptId: attempt?.id ?? null,
     callSid: msg.callSid,
     startedAt: Date.now(),
@@ -269,11 +300,54 @@ async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session 
   return session;
 }
 
-async function handlePrompt(ws: WebSocket, session: Session, utterance: string) {
+/**
+ * Neemt een transcriptiefragment aan en zorgt dat er per sessie nooit meer dan
+ * één beurt tegelijk loopt.
+ *
+ * Fragmenten die binnenkomen terwijl een beurt loopt, blijven staan en gaan
+ * daarna sámen als één beurt naar het model — niet als losse beurten. Zo krijgt
+ * het model het complete antwoord van de beller in plaats van drie brokjes, en
+ * beantwoordt het dezelfde beurt niet meerdere keren.
+ */
+async function enqueuePrompt(ws: WebSocket, session: Session, utterance: string) {
+  const text = (utterance ?? "").trim();
+  if (text) session.pending.push(text);
+
+  // Er loopt al een beurt: die pakt dit straks mee. Niet zelf beginnen.
+  if (session.turnRunning) {
+    console.log(`[relay] fragment in de wachtrij (${session.pending.length} in totaal)`);
+    return;
+  }
+
+  session.turnRunning = true;
+  try {
+    // Even wachten op een eventueel vervolg voordat we het model aanspreken.
+    if (PROMPT_MERGE_MS > 0) await delay(PROMPT_MERGE_MS);
+
+    while (session.pending.length > 0 && !session.closed) {
+      const fragments = session.pending.splice(0, session.pending.length);
+      const merged = fragments.join(" ").replace(/\s+/g, " ").trim();
+      if (fragments.length > 1) {
+        console.log(`[relay] ${fragments.length} fragmenten samengevoegd tot één beurt: "${merged}"`);
+      }
+
+      await runTurn(ws, session, merged);
+
+      // Tijdens de beurt nog iets binnengekomen? Geef de rest even de kans om
+      // aan te komen, dan gaat het in de volgende ronde als één geheel mee.
+      if (session.pending.length > 0 && PROMPT_MERGE_MS > 0) await delay(PROMPT_MERGE_MS);
+    }
+  } finally {
+    session.turnRunning = false;
+  }
+}
+
+/** Eén beurt: model bevragen, laten uitspreken, en zo nodig afronden. */
+async function runTurn(ws: WebSocket, session: Session, utterance: string) {
   // De vragenlijst is al ingediend en we hangen zo op. Nog een model-aanroep
   // doen levert niets op en zou over de afsluiting heen praten.
   if (session.agent.submitted) {
-    console.log("[relay] prompt genegeerd — de vragenlijst is al ingediend");
+    console.log("[relay] beurt overgeslagen — de vragenlijst is al ingediend");
     return;
   }
 
