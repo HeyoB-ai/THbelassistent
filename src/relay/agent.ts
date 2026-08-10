@@ -39,22 +39,32 @@ export type SubmitPayload = {
 };
 
 /**
- * De opening staat hier als vaste tekst en gaat NIET langs het model.
+ * Stap 1 van de opening: begroeting, de verplichte AI-melding, en meteen de
+ * vraag of we het juiste bedrijf aan de lijn hebben.
  *
- * Een LLM-aanroep kostte hier zo'n zeven seconden stilte nadat de gebelde
- * opneemt — genoeg om op te hangen. De tekst is toch woordelijk voorgeschreven,
- * dus er valt niets te genereren. De relay spreekt dit uit zodra de verbinding
- * staat; het model neemt het gesprek daarna over.
+ * Deze tekst gaat NIET langs het model — een LLM-aanroep kostte hier seconden
+ * stilte, en er valt niets te genereren. De relay spreekt dit uit zodra de
+ * verbinding staat.
  *
- * De AI-vermelding is wettelijk verplicht (EU AI Act, art. 50) en staat daarom
- * in de eerste zin.
+ * Bewust kort. De vorige opening was 341 tekens, ruim twintig seconden spreken
+ * voordat de beller aan de beurt was; nu is er na één zin al een heen-en-weer.
+ * De AI-melding zit in de eerste zin en blijft dus altijd staan — dat is
+ * wettelijk verplicht (EU AI Act, art. 50).
  */
-export const OPENING =
-  `Goedendag, u spreekt met de digitale AI-assistent van ${ORG}. ` +
-  "We zetten AI in om enerzijds een test uit te voeren, en anderzijds omdat we " +
-  "een aantal gegevens van u willen nagaan. We hebben u hier vorige week een " +
-  "mail over gestuurd. Heeft u twee minuten om een paar korte vragen te " +
-  "beantwoorden? De gegevens worden vertrouwelijk behandeld.";
+export function openingFor(partnerName: string): string {
+  return `Goedendag, u spreekt met de AI-assistent van ${ORG}. Spreek ik met ${partnerName}?`;
+}
+
+/** Stap 2a: het vervolg zodra de beller de bedrijfsnaam bevestigt. */
+export const OPENING_CONTINUATION =
+  "Fijn. We willen graag een paar gegevens bij u nagaan, waarover u vorige week " +
+  "een mail ontving. Heeft u twee minuten voor een paar korte vragen? " +
+  "De gegevens worden vertrouwelijk behandeld.";
+
+/** Stap 2b: de reactie als de beller de bedrijfsnaam niet herkent. */
+export function nameMismatchFor(partnerName: string): string {
+  return `Wat vreemd, in onze administratie is dit telefoonnummer gekoppeld aan ${partnerName}.`;
+}
 
 /**
  * Woordelijke afsluiting van een geslaagd gesprek.
@@ -83,7 +93,7 @@ const SUBMIT_TOOL = {
 
 /** Geëxporteerd zodat de omvang te meten is zonder een gesprek te voeren. */
 export function systemPrompt(p: PartnerContext) {
-  const script = QUESTIONS.map(
+  const script = QUESTIONS.filter((q) => !q.internal).map(
     (q, i) =>
       // "(optioneel)" sloeg eerder op de vraag zelf; het model liet vraag 2
       // daarom weg. Optioneel is alleen het ANTWOORD — behalve bij een
@@ -104,11 +114,24 @@ export function systemPrompt(p: PartnerContext) {
 
   return `Je voert een kort telefonisch interview namens ${ORG} met hun partner ${p.name}.
 
-DE OPENING IS AL UITGESPROKEN
-De begroeting is zojuist voorgelezen en staat als jouw eerste beurt in de gespreksgeschiedenis:
-"${OPENING}"
-Begroet dus niet opnieuw en herhaal deze tekst niet. Reageer op wat de gebelde erop antwoordt.
+DE OPENING IS AL UITGESPROKEN — DAT WAS STAP 1 VAN TWEE
+Deze zin is zojuist voorgelezen en staat als jouw eerste beurt in de gespreksgeschiedenis:
+"${openingFor(p.name)}"
+Begroet dus niet opnieuw. Het antwoord van de beller hierop bepaalt wat je nu doet: stap 2A of stap 2B.
 Vraagt iemand of hij met een mens spreekt, bevestig dan meteen en zonder omhaal dat je een AI bent en geen mens.
+
+STAP 2A — de beller bevestigt ("ja", "daar spreekt u mee", "klopt")
+Zeg dan woordelijk: "${OPENING_CONTINUATION}"
+Leg vast: company_name_confirmed = "yes".
+Stemt de beller daarna in, ga door naar vraag 1. Heeft hij geen tijd, volg dan NU GEEN TIJD hieronder.
+
+STAP 2B — de beller ontkent ("nee", "dat is hier niet")
+Zeg dan als eerste woordelijk: "${nameMismatchFor(p.name)}"
+Leg vast: company_name_confirmed = "no".
+Reageer daarna gewoon op wat de beller zegt, met één doel voor ogen: de vragen alsnog gesteld krijgen.
+- Blijkt het hetzelfde bedrijf onder een andere naam, of heb je iemand aan de lijn die de vragen kan beantwoorden? Ga dan door met de tekst van stap 2A en daarna de vragen. Dit is verreweg het meest voorkomende geval.
+- Alleen als overduidelijk is dat je een verkeerd nummer hebt — een privépersoon die niets met een bedrijf te maken heeft — bied dan je excuses aan, sluit vriendelijk af en roep submit_survey aan met completion "refused". Dring niet aan.
+- Ga niet mee in zijpaden, ga niet uitleggen hoe onze administratie werkt, en beloof niets. Het doel blijft de enquête.
 
 DE VRAGEN — in deze volgorde, één tegelijk
 ${script}
@@ -196,10 +219,11 @@ export class SurveyAgent {
    * model weet wat er al gezegd is en niet opnieuw begint te begroeten.
    */
   openScripted(): string {
+    const opening = openingFor(this.partner.name);
     this.messages.push({ role: "user", content: "[De telefoon is opgenomen.]" });
-    this.messages.push({ role: "assistant", content: OPENING });
-    this.transcript.push({ role: "assistant", content: OPENING, at: new Date().toISOString() });
-    return OPENING;
+    this.messages.push({ role: "assistant", content: opening });
+    this.transcript.push({ role: "assistant", content: opening, at: new Date().toISOString() });
+    return opening;
   }
 
   private async run(onChunk?: (chunk: string) => void): Promise<string> {

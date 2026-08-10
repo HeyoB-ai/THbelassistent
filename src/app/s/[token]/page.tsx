@@ -30,6 +30,8 @@ export default async function Page({ params, searchParams }: Props) {
   }
 
   const org = process.env.ORG_NAME || "TechnoHub";
+  // Interne velden stelt de assistent zelf vast; die hoort de partner niet in te vullen.
+  const askable = QUESTIONS.filter((question) => !question.internal);
   const done = partner.confirmed_at || partner.status === "self_reported";
   const opted = partner.do_not_call && !done;
 
@@ -60,7 +62,7 @@ export default async function Page({ params, searchParams }: Props) {
           </p>
           <SurveyForm
             token={token}
-            questions={QUESTIONS}
+            questions={askable}
             initial={partner.answers ?? {}}
             org={org}
           />
@@ -74,7 +76,7 @@ export default async function Page({ params, searchParams }: Props) {
           </p>
           <SurveyForm
             token={token}
-            questions={QUESTIONS}
+            questions={askable}
             initial={partner.answers ?? {}}
             org={org}
           />

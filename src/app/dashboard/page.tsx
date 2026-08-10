@@ -27,9 +27,10 @@ const DONE = ["verified", "self_reported"];
 const CONTACT_KEY = "contact_for_billing";
 const AI_KEY = "ai_interest";
 const AI_CONTACT_KEY = "ai_contact";
+const NAME_KEY = "company_name_confirmed";
 
 /** Vragen met een eigen kolom; de rest komt op de regel eronder te staan. */
-const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY, AI_CONTACT_KEY];
+const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY, AI_CONTACT_KEY, NAME_KEY];
 
 /**
  * De overige antwoorden, in de volgorde van de vragenlijst. Wordt er een vraag
@@ -66,6 +67,8 @@ export default async function Dashboard() {
   const live = rows.filter((r) => r.status === "calling").length;
   const closed = rows.filter((r) => ["refused", "invalid", "excluded"].includes(r.status)).length;
   const aiInterested = rows.filter((r) => r.answers?.[AI_KEY] === "yes").length;
+  // Deze nummers staan mogelijk op de verkeerde naam — werk voor de administratie.
+  const nameMismatch = rows.filter((r) => r.answers?.[NAME_KEY] === "no").length;
 
   const blocked = whyNotCallable(new Date(), {
     start: campaign.window_start,
@@ -104,6 +107,9 @@ export default async function Dashboard() {
         <div><b style={{ color: "var(--live)" }}>{live}</b><span className="eyebrow">in gesprek</span></div>
         <div><b style={{ color: "var(--halt)" }}>{closed}</b><span className="eyebrow">niet bereikbaar</span></div>
         <div><b>{aiInterested}</b><span className="eyebrow">interesse in AI</span></div>
+        {nameMismatch > 0 && (
+          <div><b style={{ color: "var(--halt)" }}>{nameMismatch}</b><span className="eyebrow">naam klopt niet</span></div>
+        )}
       </div>
 
       {/* Signatuur: het lijnenbord. Eén streep per partner, zoals op een
@@ -186,7 +192,22 @@ export default async function Dashboard() {
               return (
                 <Fragment key={r.id}>
                   <tr id={`p-${r.id}`}>
-                    <td>{r.name}</td>
+                    <td>
+                      {r.name}
+                      {/* De beller herkende deze naam niet: mogelijk staat het
+                          nummer bij de verkeerde partner of is de naam oud. */}
+                      {r.answers?.[NAME_KEY] === "no" && (
+                        <span
+                          title="De beller herkende deze bedrijfsnaam niet — controleer het telefoonnummer in het CRM"
+                          style={{
+                            marginLeft: 8, fontSize: 12, color: "var(--halt)",
+                            border: "1px solid var(--halt)", borderRadius: 3, padding: "1px 5px",
+                          }}
+                        >
+                          naam?
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: statusColor(r.status) }}>{statusLabel(r.status)}</td>
                     <td className="num">{r.attempts || "—"}</td>
                     <td className="num">{r.reported_headcount ?? "—"}</td>

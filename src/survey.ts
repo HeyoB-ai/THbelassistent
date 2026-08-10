@@ -29,6 +29,13 @@ export type Question = {
    * assistent. Op het webformulier staat het veld gewoon altijd.
    */
   askWhen?: string;
+  /**
+   * Geen vraag aan de partner, maar iets wat de assistent zelf vaststelt uit
+   * het gesprek. Staat niet op het webformulier en niet in de vragenlijst die
+   * de assistent afwerkt, maar telt verder als een gewoon antwoord: het gaat
+   * mee in het toolschema, het dashboard en de export.
+   */
+  internal?: boolean;
   /** Assistent leest het antwoord terug ter controle. Aan voor alles wat telt. */
   confirm: boolean;
 };
@@ -85,6 +92,22 @@ export const QUESTIONS: Question[] = [
     askWhen: 'de partner JA antwoordde op ai_interest — bij "nee" sla je hem over',
     confirm: false,
   },
+  {
+    key: "company_name_confirmed",
+    // Wordt niet als vraag gesteld: dit volgt uit de bedrijfsbevestiging in de
+    // opening. Staat "no", dan is het telefoonnummer mogelijk aan de verkeerde
+    // partner gekoppeld of is de naam verouderd — werk voor de administratie.
+    spoken: "",
+    label: "Bedrijfsnaam bevestigd",
+    input: "choice",
+    options: [
+      { value: "yes", label: "Ja" },
+      { value: "no", label: "Nee — naam niet herkend" },
+    ],
+    required: false,
+    internal: true,
+    confirm: false,
+  },
 ];
 
 /**
@@ -99,6 +122,7 @@ export const AnswerSchema = z.object({
   contact_for_billing: z.string().max(200).optional(),
   ai_interest: z.enum(["yes", "no"]).optional(),
   ai_contact: z.string().max(200).optional(),
+  company_name_confirmed: z.enum(["yes", "no"]).optional(),
 });
 
 export type Answers = z.infer<typeof AnswerSchema>;

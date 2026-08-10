@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { q, one, getCampaign, logEvent } from "../lib/db.js";
-import { SurveyAgent, OPENING, type PartnerContext } from "./agent.js";
+import { SurveyAgent, openingFor, type PartnerContext } from "./agent.js";
 import { AnswerSchema } from "../survey.js";
 import { releasePartner } from "../lib/partners.js";
 
@@ -61,16 +61,19 @@ function newTiming(): Timing {
  * opening had gehoord. De verplichte AI-melding zit in de eerste zin, dus die
  * mag daar niet aan opgeofferd worden.
  *
- * Zes seconden dekt die eerste zin ruim. Langer maken kost barge-in: wie na drie
- * seconden zegt dat het niet uitkomt, wordt zolang genegeerd. Instelbaar via
+ * De opening is nu één korte zin die eindigt op een vraag ("Spreek ik met X?"),
+ * dus de beller HOORT te antwoorden zodra die zin klaar is. Het venster hoeft
+ * alleen die eerste seconden af te dekken waarin hij nog over ons heen zijn
+ * eigen "met Bakkerij Jansen?" zegt. Tweeënhalve seconde doet dat; langer zou
+ * juist zijn antwoord op onze vraag wegfilteren. Instelbaar via
  * OPENING_GUARD_MS, 0 zet 'm helemaal uit.
  */
 const OPENING_GUARD_MS = (() => {
   const raw = process.env.OPENING_GUARD_MS;
-  const value = raw === undefined ? 6000 : Number(raw);
+  const value = raw === undefined ? 2500 : Number(raw);
   if (!Number.isFinite(value) || value < 0 || value > 30_000) {
-    console.warn(`[relay] OPENING_GUARD_MS="${raw}" ongeldig; 6000 gebruikt`);
-    return 6000;
+    console.warn(`[relay] OPENING_GUARD_MS="${raw}" ongeldig; 2500 gebruikt`);
+    return 2500;
   }
   return value;
 })();
@@ -206,36 +209,33 @@ export async function startRelayServer(port: number) {
 async function handleSetup(ws: WebSocket, msg: any, t: Timing): Promise<Session | null> {
   t.mark("handleSetup binnen — er is nog niets geawait");
 
-  // Eerst praten, dan pas opzoeken. Alles wat hiervóór gebeurt is stilte voor
-  // iemand die net heeft opgenomen; de opening hangt niet van de partner af.
-  const sendStart = Date.now();
-  speak(ws, OPENING);
-  const openingSentAt = Date.now();
-  t.openingSentAt = openingSentAt;
-  t.mark(
-    "opening de deur uit",
-    `${OPENING.length} tekens, ws.send duurde ${t.openingSentAt - sendStart}ms, ` +
-      `nog ${ws.bufferedAmount} bytes in de socketbuffer`,
-  );
-
+  // De opening noemt de bedrijfsnaam ("Spreek ik met X?"), dus die moeten we
+  // eerst ophalen. Eerder spraken we bewust vóór de lookup om geen milliseconde
+  // te verliezen; een query op de EU-Postgres kost tientallen milliseconden en
+  // dat weegt niet op tegen een begroeting die de partner bij naam noemt.
   const partnerId = msg.customParameters?.partnerId;
   const lookupStart = Date.now();
   const partner = await one<any>(
     `select id, name, contact_name, known_headcount from partners where id = $1`,
     [partnerId],
   );
-  t.mark(
-    "partner-lookup klaar",
-    `${Date.now() - lookupStart}ms, ` +
-      (t.openingSentAt === null
-        ? "LET OP: dit gebeurde VOOR de opening"
-        : "na de opening, zoals bedoeld"),
-  );
+  t.mark("partner-lookup klaar", `${Date.now() - lookupStart}ms`);
   if (!partner) {
     console.error(`[relay] onbekende partner in setup: ${partnerId}`);
     ws.send(JSON.stringify({ type: "end" }));
     return null;
   }
+
+  const opening = openingFor(partner.name);
+  const sendStart = Date.now();
+  speak(ws, opening);
+  const openingSentAt = Date.now();
+  t.openingSentAt = openingSentAt;
+  t.mark(
+    "opening de deur uit",
+    `${opening.length} tekens, ws.send duurde ${openingSentAt - sendStart}ms, ` +
+      `nog ${ws.bufferedAmount} bytes in de socketbuffer`,
+  );
 
   const attemptStart = Date.now();
   const attempt = await one<{ id: string }>(
