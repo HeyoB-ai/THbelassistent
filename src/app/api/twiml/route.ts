@@ -28,6 +28,10 @@ import { NextRequest } from "next/server";
  * 600-5000ms; Twilio's eigen standaard is `auto`. Korter = sneller antwoord,
  * meer kans dat de assistent iemand in de rede valt.
  *
+ * Stond op 800 en staat nu op 600 — de laagste waarde die Twilio accepteert.
+ * Verder omlaag kan niet; onder de 600 keurt Twilio de TwiML af en komt het
+ * gesprek helemaal niet tot stand.
+ *
  * Via de omgeving te zetten zodat tunen geen deploy vraagt. Een waarde buiten
  * bereik laat Twilio de TwiML afkeuren — en dan loopt het gesprek stuk — dus
  * hij wordt hier begrensd en teruggezet op de standaard. Met `off` gaat het
@@ -40,7 +44,7 @@ import { NextRequest } from "next/server";
 const SPEECH_TIMEOUT =
   process.env.STT_SPEECH_TIMEOUT_MS?.trim().toLowerCase() === "off"
     ? null
-    : Math.round(clamp("STT_SPEECH_TIMEOUT_MS", process.env.STT_SPEECH_TIMEOUT_MS, 600, 5000, 800));
+    : Math.round(clamp("STT_SPEECH_TIMEOUT_MS", process.env.STT_SPEECH_TIMEOUT_MS, 600, 5000, 600));
 
 function clamp(name: string, raw: string | undefined, min: number, max: number, fallback: number) {
   if (!raw) return fallback;
