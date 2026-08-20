@@ -10,12 +10,13 @@ export async function submitSelfReport(token: string, form: FormData) {
   const p = await one<{ id: string }>(`select id from partners where token = $1`, [token]);
   if (!p) return { error: "Deze link is niet meer geldig." };
 
-  const aiInterest = String(form.get("ai_interest") ?? "");
+  const text = (key: string) => String(form.get(key) ?? "").trim() || undefined;
   const raw = {
     headcount: Number(form.get("headcount")),
-    contact_for_billing: String(form.get("contact_for_billing") ?? "") || undefined,
-    ai_interest: aiInterest === "yes" || aiInterest === "no" ? aiInterest : undefined,
-    ai_contact: String(form.get("ai_contact") ?? "") || undefined,
+    contact_for_billing: text("contact_for_billing"),
+    contact_for_billing_email: text("contact_for_billing_email"),
+    contact_for_activities: text("contact_for_activities"),
+    contact_for_activities_email: text("contact_for_activities_email"),
   };
 
   const parsed = AnswerSchema.safeParse(raw);

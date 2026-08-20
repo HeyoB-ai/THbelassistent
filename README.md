@@ -50,6 +50,39 @@ Eén repo, twee deploy-targets. Beide lezen dezelfde `DATABASE_URL`.
   worker nodig heeft.
 - `PUBLIC_BASE_URL` = het Netlify-adres van de app.
 - `RELAY_WS_URL` = het `wss://`-adres van de worker (zie hieronder).
+- `VAPI_API_KEY` en `VAPI_WEBHOOK_SECRET` voor de Vapi-webhook (zie hieronder).
+
+### Vapi levert de gesprekken af
+
+De belronde wordt gevoerd door Vapi. Aan het eind van elk gesprek stuurt Vapi
+het `end-of-call-report`-event naar:
+
+```
+https://<jouw-netlify-adres>/api/vapi-webhook
+```
+
+Zet dat adres in Vapi bij de server-URL van de assistent, en zet er een geheim
+bij dat gelijk is aan `VAPI_WEBHOOK_SECRET` in de Netlify-omgeving. Alle drie de
+Vapi-varianten werken: server secret (`X-Vapi-Secret`), bearer-token
+(`Authorization`) en een HMAC-credential (`X-Vapi-Signature`, SHA-256). Zonder
+die variabele antwoordt het endpoint met 503 en slaat het niets op.
+
+Wat het endpoint doet, staat in `src/app/api/vapi-webhook/route.ts`; het uitlezen
+van de payload zit los in `src/lib/vapi.ts`. Twee dingen om te weten:
+
+- De structured output is een LLM-aanroep die een paar seconden ná het gesprek
+  klaar is en zit dan nog niet in de webhook. Het endpoint haalt de call in dat
+  geval alsnog op via de Vapi-API, met maximaal drie pogingen binnen zeven
+  seconden — ruim binnen de tien seconden die een Netlify-functie krijgt.
+- De partner wordt gezocht op het gebelde nummer. Levert dat geen eenduidige
+  treffer op, dan wordt er **niets** opgeslagen en verschijnt er een regel in de
+  Netlify-logs én in de `events`-tabel (`vapi_partner_unmatched`). Beter een gat
+  dat opvalt dan een antwoord onder de verkeerde naam.
+
+In de logs staat per gesprek of de partner gevonden is, of de data uit de
+webhook of via de API kwam, en of de rij weggeschreven is. Bij het eerste
+testgesprek staat er ook een regel `[vapi] payload-vorm:` met de sleutels van de
+payload (zonder waarden), om te bevestigen waar Vapi de velden neerzet.
 
 ### Worker (belplanner + WebSocket)
 

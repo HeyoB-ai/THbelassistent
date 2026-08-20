@@ -64,32 +64,32 @@ export const QUESTIONS: Question[] = [
     confirm: false,
   },
   {
-    key: "ai_interest",
-    spoken:
-      "Als {{org}} zetten we in op het promoten van AI voor onze partners. " +
-      "Daarvoor hebben we de AI-cirkel opgezet, en bouwen we applicaties zoals " +
-      "deze. Bent u geïnteresseerd om meer te leren over de inzet van AI " +
-      "binnen uw onderneming?",
-    label: "Interesse in AI",
-    hint: "Bij interesse neemt een collega hierover contact op.",
-    input: "choice",
-    options: [
-      { value: "yes", label: "Ja" },
-      { value: "no", label: "Nee" },
-    ],
-    required: true,
+    key: "contact_for_billing_email",
+    spoken: "En op welk e-mailadres bereiken we die persoon?",
+    label: "E-mailadres voor de partnerbijdrage",
+    hint: "Het adres waar de factuur en de correspondentie over de bijdrage naartoe mogen.",
+    input: "text",
+    required: false,
+    askWhen: "er een contactpersoon voor de partnerbijdrage genoemd is",
     confirm: false,
   },
   {
-    key: "ai_contact",
-    spoken: "Met wie kan mijn collega hierover het beste contact opnemen?",
-    label: "Contactpersoon voor AI",
-    hint: "Alleen invullen als u interesse heeft in AI.",
+    key: "contact_for_activities",
+    spoken:
+      "En wie kunnen we bij {{partner}} het beste benaderen over de activiteiten van {{org}}?",
+    label: "Contactpersoon voor de activiteiten",
     input: "text",
     required: false,
-    // Zonder naam heeft de collega die opvolgt wel een 'ja' maar niemand om te
-    // bellen. Bij 'nee' is de vraag zinloos, dus die slaan we over.
-    askWhen: 'de partner JA antwoordde op ai_interest — bij "nee" sla je hem over',
+    confirm: false,
+  },
+  {
+    key: "contact_for_activities_email",
+    spoken: "Op welk e-mailadres bereiken we die persoon?",
+    label: "E-mailadres voor de activiteiten",
+    hint: "Het adres waarop de uitnodigingen voor bijeenkomsten binnenkomen.",
+    input: "text",
+    required: false,
+    askWhen: "er een contactpersoon voor de activiteiten genoemd is",
     confirm: false,
   },
   {
@@ -97,12 +97,15 @@ export const QUESTIONS: Question[] = [
     // Wordt niet als vraag gesteld: dit volgt uit de bedrijfsbevestiging in de
     // opening. Staat "no", dan is het telefoonnummer mogelijk aan de verkeerde
     // partner gekoppeld of is de naam verouderd — werk voor de administratie.
+    // "unknown" is een volwaardige derde uitkomst: het gesprek kwam op gang
+    // zonder dat de naam ooit hardop bevestigd is.
     spoken: "",
     label: "Bedrijfsnaam bevestigd",
     input: "choice",
     options: [
       { value: "yes", label: "Ja" },
       { value: "no", label: "Nee — naam niet herkend" },
+      { value: "unknown", label: "Niet vastgesteld" },
     ],
     required: false,
     internal: true,
@@ -113,16 +116,23 @@ export const QUESTIONS: Question[] = [
 /**
  * Zod-schema, afgeleid van bovenstaande definitie.
  *
- * ai_interest staat hier optioneel terwijl de vraag wél altijd gesteld wordt:
- * wie er niet op wil antwoorden, moet daarmee niet zijn hele — verder complete
- * — antwoord ongeldig maken en opnieuw gebeld worden.
+ * Alleen het aantal medewerkers is verplicht: dat is het cijfer waar de
+ * partnerbijdrage op gebaseerd wordt. Een contactpersoon die niet genoemd
+ * werd, moet een verder compleet antwoord niet ongeldig maken.
+ *
+ * De e-mailadressen staan bewust als vrije tekst en niet als z.string().email():
+ * ze worden aan de telefoon gespeld en komen via spraakherkenning binnen. Eén
+ * verhaspeld adres mag het hele antwoord — inclusief het aantal medewerkers —
+ * niet weggooien. Wat er staat is leesbaar in het dashboard en de export, en
+ * daar corrigeert een mens het.
  */
 export const AnswerSchema = z.object({
   headcount: z.number().int().min(0).max(100_000),
   contact_for_billing: z.string().max(200).optional(),
-  ai_interest: z.enum(["yes", "no"]).optional(),
-  ai_contact: z.string().max(200).optional(),
-  company_name_confirmed: z.enum(["yes", "no"]).optional(),
+  contact_for_billing_email: z.string().max(200).optional(),
+  contact_for_activities: z.string().max(200).optional(),
+  contact_for_activities_email: z.string().max(200).optional(),
+  company_name_confirmed: z.enum(["yes", "no", "unknown"]).optional(),
 });
 
 export type Answers = z.infer<typeof AnswerSchema>;

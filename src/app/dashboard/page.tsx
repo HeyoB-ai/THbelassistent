@@ -25,12 +25,20 @@ type Row = {
 const DONE = ["verified", "self_reported"];
 
 const CONTACT_KEY = "contact_for_billing";
-const AI_KEY = "ai_interest";
-const AI_CONTACT_KEY = "ai_contact";
+const CONTACT_EMAIL_KEY = "contact_for_billing_email";
+const ACTIVITIES_KEY = "contact_for_activities";
+const ACTIVITIES_EMAIL_KEY = "contact_for_activities_email";
 const NAME_KEY = "company_name_confirmed";
 
 /** Vragen met een eigen kolom; de rest komt op de regel eronder te staan. */
-const OWN_COLUMN = ["headcount", CONTACT_KEY, AI_KEY, AI_CONTACT_KEY, NAME_KEY];
+const OWN_COLUMN = [
+  "headcount",
+  CONTACT_KEY,
+  CONTACT_EMAIL_KEY,
+  ACTIVITIES_KEY,
+  ACTIVITIES_EMAIL_KEY,
+  NAME_KEY,
+];
 
 /**
  * De overige antwoorden, in de volgorde van de vragenlijst. Wordt er een vraag
@@ -66,7 +74,6 @@ export default async function Dashboard() {
   const awaiting = rows.filter((r) => r.status === "completed").length;
   const live = rows.filter((r) => r.status === "calling").length;
   const closed = rows.filter((r) => ["refused", "invalid", "excluded"].includes(r.status)).length;
-  const aiInterested = rows.filter((r) => r.answers?.[AI_KEY] === "yes").length;
   // Deze nummers staan mogelijk op de verkeerde naam — werk voor de administratie.
   const nameMismatch = rows.filter((r) => r.answers?.[NAME_KEY] === "no").length;
 
@@ -106,7 +113,6 @@ export default async function Dashboard() {
         <div><b>{awaiting}</b><span className="eyebrow">wacht op akkoord</span></div>
         <div><b style={{ color: "var(--live)" }}>{live}</b><span className="eyebrow">in gesprek</span></div>
         <div><b style={{ color: "var(--halt)" }}>{closed}</b><span className="eyebrow">niet bereikbaar</span></div>
-        <div><b>{aiInterested}</b><span className="eyebrow">interesse in AI</span></div>
         {nameMismatch > 0 && (
           <div><b style={{ color: "var(--halt)" }}>{nameMismatch}</b><span className="eyebrow">naam klopt niet</span></div>
         )}
@@ -182,7 +188,7 @@ export default async function Dashboard() {
           <thead>
             <tr>
               <th>Partner</th><th>Status</th><th>Pogingen</th>
-              <th>Aantal</th><th>Contactpersoon</th><th>AI-interesse</th>
+              <th>Aantal</th><th>Partnerbijdrage</th><th>Activiteiten</th>
               <th>Laatste poging</th>
             </tr>
           </thead>
@@ -211,22 +217,10 @@ export default async function Dashboard() {
                     <td style={{ color: statusColor(r.status) }}>{statusLabel(r.status)}</td>
                     <td className="num">{r.attempts || "—"}</td>
                     <td className="num">{r.reported_headcount ?? "—"}</td>
-                    <td>{answerLabel(CONTACT_KEY, r.answers?.[CONTACT_KEY]) || "—"}</td>
-                    {/* Het bellijstje voor de collega die AI-opvolging doet:
-                        'ja' springt eruit, met de opgegeven naam erachter. */}
-                    <td
-                      style={{
-                        color: r.answers?.[AI_KEY] === "yes" ? "var(--signal)" : "var(--mute)",
-                        fontWeight: r.answers?.[AI_KEY] === "yes" ? 600 : 400,
-                      }}
-                    >
-                      {answerLabel(AI_KEY, r.answers?.[AI_KEY]) || "—"}
-                      {answerLabel(AI_CONTACT_KEY, r.answers?.[AI_CONTACT_KEY]) && (
-                        <span style={{ color: "var(--mute)", fontWeight: 400 }}>
-                          {" "}— {answerLabel(AI_CONTACT_KEY, r.answers?.[AI_CONTACT_KEY])}
-                        </span>
-                      )}
-                    </td>
+                    {/* Twee contactpersonen, elk met het adres eronder: dit is
+                        wat de administratie straks overneemt in het CRM. */}
+                    <td><Contact answers={r.answers} nameKey={CONTACT_KEY} emailKey={CONTACT_EMAIL_KEY} /></td>
+                    <td><Contact answers={r.answers} nameKey={ACTIVITIES_KEY} emailKey={ACTIVITIES_EMAIL_KEY} /></td>
                     <td className="num" style={{ color: "var(--mute)" }}>
                       {r.last_attempt_at
                         ? new Date(r.last_attempt_at).toLocaleString("nl-NL", {
@@ -258,6 +252,32 @@ export default async function Dashboard() {
         </table>
       </section>
     </main>
+  );
+}
+
+/**
+ * Eén contactpersoon: de naam, met daaronder het adres. Ontbreekt de naam maar
+ * is er wél een adres, dan staat dat adres er alsnog — het is toch een spoor.
+ */
+function Contact({
+  answers,
+  nameKey,
+  emailKey,
+}: {
+  answers: Record<string, unknown> | null;
+  nameKey: string;
+  emailKey: string;
+}) {
+  const name = answerLabel(nameKey, answers?.[nameKey]);
+  const email = answerLabel(emailKey, answers?.[emailKey]);
+  if (!name && !email) return <>—</>;
+  return (
+    <>
+      {name || "—"}
+      {email && (
+        <span style={{ display: "block", color: "var(--mute)", fontSize: 13 }}>{email}</span>
+      )}
+    </>
   );
 }
 
